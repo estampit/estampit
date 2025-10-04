@@ -1,0 +1,3 @@
+# Minimal config before linking; CLI will inject project_ref
+[api]
+enabled = true

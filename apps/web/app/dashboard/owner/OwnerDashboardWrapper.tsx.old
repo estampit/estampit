@@ -1,0 +1,201 @@
+"use client"
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { OwnerDashboardClient } from '@/components/OwnerDashboardClient'
+import { BusinessSetupForm } from '@/components/BusinessSetupForm'
+import { useAuth } from '../../context/AuthContext'
+import { getSupabaseClient } from '@/lib/supabaseClient'
+
+export function OwnerDashboardWrapper() {
+  const [mode, setMode] = useState<'loading'|'demo'|'ready'|'empty'>('loading')
+  const [sessionChecked, setSessionChecked] = useState(false)
+  const { user, session, loading: authLoading } = useAuth()
+  const supabase = getSupabaseClient()
+  const router = useRouter()
+
+  // Effect para verificar sesión manualmente al cargar
+  useEffect(() => {
+    let mounted = true
+    let timeoutId: NodeJS.Timeout
+    
+    const checkSession = async () => {
+      console.log('🔍 Verificando sesión manualmente...')
+      console.log('📝 Cookies actuales:', document.cookie)
+      console.log('📝 URL completa:', window.location.href)
+      console.log('📝 URL hash:', window.location.hash)
+      
+      // Detectar si hay un token de recuperación en el hash
+      if (window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        const accessToken = hashParams.get('access_token')
+        const type = hashParams.get('type')
+        
+        console.log('🔍 Hash params:', { 
+          hasAccessToken: !!accessToken, 
+          type,
+          allParams: Array.from(hashParams.entries())
+        })
+        
+        if (type === 'recovery' && accessToken) {
+          console.log('🔐 Detectado type=recovery con token, redirigiendo a callback...')
+          // Usar replace para evitar que se quede en el historial
+          window.location.replace('/auth/callback' + window.location.hash)
+          return
+        } else if (type === 'recovery') {
+          console.log('⚠️ Detectado type=recovery pero sin access_token')
+        }
+      }
+      
+      // Timeout de seguridad - si no completa en 2 segundos, asumir que no hay sesión
+      timeoutId = setTimeout(() => {
+        if (mounted && !sessionChecked) {
+          console.log('⏰ Timeout de verificación alcanzado - asumiendo sin sesión')
+          setSessionChecked(true)
+          setMode('empty')
+        }
+      }, 2000)
+      
+      try {
+        // Intentar getSession con timeout
+        const sessionPromise = supabase.auth.getSession()
+        const result = await Promise.race([
+          sessionPromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 1500)
+          )
+        ])
+        
+        const { data: { session: currentSession }, error } = result as any
+        
+        if (!mounted) return
+        
+        clearTimeout(timeoutId)
+        
+        if (error) {
+          console.error('❌ Error obteniendo sesión:', error)
+          setSessionChecked(true)
+          setMode('empty')
+          return
+        }
+        
+        if (currentSession) {
+          console.log('✅ Sesión encontrada:', currentSession.user.email)
+          
+          // Verificar si es una sesión de recuperación
+          const { data: { user } } = await supabase.auth.getUser()
+          if (user?.recovery_sent_at) {
+            console.log('🔐 Sesión de recuperación detectada, redirigiendo a update-password')
+            router.push('/auth/update-password')
+            return
+          }
+          
+          setSessionChecked(true)
+          setMode('ready')
+        } else {
+          console.log('❌ No hay sesión')
+          setSessionChecked(true)
+          setMode('empty')
+        }
+      } catch (err: any) {
+        console.log('⚠️ Error o timeout verificando sesión:', err.message)
+        if (mounted) {
+          clearTimeout(timeoutId)
+          setSessionChecked(true)
+          setMode('empty')
+        }
+      }
+    }
+    
+    checkSession()
+    
+    return () => {
+      mounted = false
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [supabase, sessionChecked, router])
+
+  // Effect para manejar el estado después de verificar sesión
+  useEffect(() => {
+    if (!sessionChecked) {
+      console.log('⏳ Aún verificando sesión...')
+      return
+    }
+    
+    if (authLoading) {
+      console.log('⏳ Esperando AuthContext...')
+      return
+    }
+    
+    // Limpiar cookie demo si existe
+    const demoCookie = document.cookie.includes('demo_user=1')
+    if (demoCookie) {
+      document.cookie = 'demo_user=1; Max-Age=0; path=/'
+    }
+    
+    // Si ya encontramos sesión en el check manual, quedarnos en ready
+    if (mode === 'ready') {
+      console.log('✅ Modo ready confirmado')
+      return
+    }
+    
+    // Determinar modo basado en sesión actual del AuthContext
+    if (!session || !user) {
+      console.log('❌ No hay sesión activa en AuthContext')
+      console.log('   session:', !!session, 'user:', !!user)
+      // Dar tiempo antes de redirigir
+      const timer = setTimeout(() => {
+        console.log('⏰ Timeout alcanzado, redirigiendo a login')
+        window.location.href = '/login'
+      }, 3000)
+      setMode('empty')
+      return () => clearTimeout(timer)
+    } else {
+      console.log('✅ Sesión activa en AuthContext:', user.email)
+      setMode('ready')
+    }
+  }, [sessionChecked, authLoading, session, user, mode])
+  
+  // Effect separado para suscripción a cambios de auth (solo se ejecuta una vez)
+  useEffect(() => {
+    let mounted = true
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      console.log('🔐 Auth cambió:', event, newSession?.user?.email)
+      
+      if (!mounted) return
+      
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (newSession?.user) setMode('ready')
+      } else if (event === 'SIGNED_OUT') {
+        setMode('empty')
+      }
+    })
+    
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
+  }, [supabase]) // Solo se ejecuta una vez al montar
+
+  if (mode === 'loading') return <div className="p-6">Cargando...</div>
+  if (mode === 'ready') return <div className="p-6"><OwnerDashboardClient /></div>
+  
+  // Si no hay sesión, redirigir a login
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="max-w-md w-full p-8 bg-white rounded-lg shadow-lg text-center">
+        <div className="text-6xl mb-4">🔐</div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-3">Sesión Expirada</h2>
+        <p className="text-gray-600 mb-6">
+          Tu sesión ha expirado o no has iniciado sesión. Por favor, vuelve a iniciar sesión.
+        </p>
+        <button
+          onClick={() => window.location.href = '/login'}
+          className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition"
+        >
+          Ir a Login
+        </button>
+      </div>
+    </div>
+  )
+}

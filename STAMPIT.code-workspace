@@ -1,0 +1,20 @@
+{
+  "folders": [
+    { "path": "." },
+    { "path": "apps/web" },
+    { "path": "backend/supabase" }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.turbo": true,
+      "**/node_modules": true,
+      "**/.DS_Store": true
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/.turbo": true
+    },
+    "explorer.compactFolders": false,
+    "editor.formatOnSave": true
+  }
+}

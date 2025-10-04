@@ -1,0 +1,134 @@
+"use client"
+import { createContext, useContext, useEffect, useState } from 'react'
+import { getSupabaseClient } from '@/lib/supabaseClient'
+import type { User, Session } from '@supabase/supabase-js'
+
+type AuthContextType = {
+  user: User | null
+  session: Session | null
+  loading: boolean
+  businessId: string | null
+}
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  session: null,
+  loading: true,
+  businessId: null
+})
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [businessId, setBusinessId] = useState<string | null>(null)
+  const [supabase] = useState(() => getSupabaseClient())
+
+  useEffect(() => {
+    console.log('🔐 AuthContext: useEffect starting')
+    let mounted = true
+    let sessionChecked = false
+
+    // Get initial session
+    const getInitialSession = async () => {
+      console.log('🔐 AuthContext: getting initial session...')
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        console.log('🔐 AuthContext: getSession result - session:', !!session, 'error:', error)
+        
+        if (mounted && !sessionChecked) {
+          sessionChecked = true
+          setLoading(false)
+          setSession(session)
+          setUser(session?.user ?? null)
+          
+          console.log('🔐 Session set:', session?.user?.email || 'No session')
+          
+          if (session?.user) {
+            // Buscar business en paralelo (no bloquear)
+            supabase
+              .from('businesses')
+              .select('id')
+              .eq('owner_id', session.user.id)
+              .order('created_at')
+              .limit(1)
+              .then(({ data: biz }) => {
+                if (mounted && biz && biz.length) {
+                  console.log('🏢 Business found:', biz[0].id)
+                  setBusinessId(biz[0].id)
+                }
+              })
+              .catch(err => console.warn('AuthContext: error fetching business', err))
+          } else {
+            setBusinessId(null)
+          }
+        }
+      } catch (err) {
+        console.warn('AuthContext: error in getInitialSession', err)
+        if (mounted && !sessionChecked) {
+          sessionChecked = true
+          setLoading(false)
+        }
+      }
+    }
+
+    // Get initial session immediately
+    getInitialSession()
+
+    // Timeout de seguridad más corto (500ms)
+    const timer = setTimeout(() => {
+      if (mounted && !sessionChecked) {
+        console.log('🔐 AuthContext: timeout reached, forcing loading=false')
+        sessionChecked = true
+        setLoading(false)
+      }
+    }, 500)
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔐 Auth state changed:', event, session?.user?.email)
+      if (!mounted) return
+
+      sessionChecked = true
+      setLoading(false)
+      setSession(session)
+      setUser(session?.user ?? null)
+
+      if (session?.user) {
+        // Buscar business en paralelo
+        supabase
+          .from('businesses')
+          .select('id')
+          .eq('owner_id', session.user.id)
+          .order('created_at')
+          .limit(1)
+          .then(({ data: biz }) => {
+            if (mounted && biz && biz.length) setBusinessId(biz[0].id)
+          })
+          .catch(err => console.warn('AuthContext: error fetching business', err))
+      } else {
+        setBusinessId(null)
+      }
+    })
+
+    return () => {
+      mounted = false
+      clearTimeout(timer)
+      subscription.unsubscribe()
+    }
+  }, [supabase])
+
+  return (
+    <AuthContext.Provider value={{ user, session, loading, businessId }}>
+      {children}
+    </AuthContext.Provider>
+  )
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext)
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider')
+  }
+  return context
+}

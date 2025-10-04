@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Supabase: Link Project",
+      "type": "shell",
+      "command": "supabase link --project-ref ntswpcbywkzekfyrbhdj",
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: DB Push",
+      "type": "shell",
+      "command": "cd backend/supabase && supabase db push",
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: Start Local Stack",
+      "type": "shell",
+      "command": "cd backend/supabase && supabase start",
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: Stop Local Stack",
+      "type": "shell",
+      "command": "cd backend/supabase && supabase stop",
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: DB Reset (Local)",
+      "type": "shell",
+      "command": "cd backend/supabase && supabase db reset",
+      "problemMatcher": []
+    }
+  ]
+}
