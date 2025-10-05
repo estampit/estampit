@@ -15,6 +15,11 @@ export async function middleware(request: NextRequest) {
     return new NextResponse(null, { status: 200, headers: response.headers })
   }
 
+  // Permitir que /auth/callback redirija libremente (para OAuth)
+  if (request.nextUrl.pathname === '/auth/callback') {
+    return supabaseResponse
+  }
+
   // Proteger rutas del dashboard
   if (request.nextUrl.pathname.startsWith('/dashboard')) {
     if (!user) {
@@ -25,6 +30,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Si está autenticado y va a /login, redirigir al dashboard
+  // PERO: permitir que clientes OAuth vayan a /join después de autenticarse
   if (request.nextUrl.pathname === '/login' && user) {
     return NextResponse.redirect(new URL('/dashboard/owner', request.url))
   }

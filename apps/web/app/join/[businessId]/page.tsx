@@ -1,16 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
-import { QuickJoinForm } from '../components/QuickJoinForm'
+import { redirect } from 'next/navigation'
+import { loadJoinData } from '../lib/loadJoinData'
 
 type SearchParams = {
   promo?: string | string[]
-}
-
-type Promotion = {
-  id: string
-  name: string
-  promo_type: string
-  ends_at: string | null
 }
 
 type BusinessRow = {
@@ -52,100 +45,44 @@ export default async function JoinBusinessPage({
       </div>
     )
   }
-
-  const admin = createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  })
-
   const promoParam = normalizeParam(resolvedSearchParams?.promo)
 
-  const { data: business, error: businessErr } = await admin
-    .from('businesses')
-    .select('id,name,description,logo_url,settings')
-    .eq('id', businessId)
-    .maybeSingle()
+  let joinData
+  try {
+    joinData = await loadJoinData(businessId, { focusPromotionId: promoParam })
+  } catch (error) {
+    if ((error as Error).message === 'business_not_found') {
+      return (
+        <div className="p-10 text-center space-y-4">
+          <h1 className="text-2xl font-bold text-red-600">Negocio no encontrado</h1>
+          <p className="text-sm text-gray-500">No pudimos localizar el comercio solicitado.</p>
+          <Link href="/" className="inline-flex items-center justify-center rounded bg-indigo-600 px-4 py-2 text-white">
+            Volver al inicio
+          </Link>
+        </div>
+      )
+    }
 
-  if (businessErr || !business) {
-    return (
-      <div className="p-10 text-center space-y-4">
-        <h1 className="text-2xl font-bold text-red-600">Negocio no encontrado</h1>
-        <p className="text-sm text-gray-500">No pudimos localizar el comercio solicitado.</p>
-        <Link href="/" className="inline-flex items-center justify-center px-4 py-2 bg-indigo-600 text-white rounded">
-          Volver al inicio
-        </Link>
-      </div>
-    )
+    throw error
   }
 
-  const { data: loyaltyCard } = await admin
-    .from('loyalty_cards')
-    .select('id,name,description,stamps_required,reward_description')
-    .eq('business_id', businessId)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+  const targetPromotionId = joinData.focusedPromotion?.id ?? joinData.promotions[0]?.id ?? null
 
-  let promotions: Promotion[] = []
-  const { data: promotionsData } = await admin.rpc('get_public_active_promotions', {
-    p_business_id: businessId
-  })
-  if (Array.isArray(promotionsData)) {
-    promotions = promotionsData as Promotion[]
+  if (targetPromotionId) {
+    redirect(`/join/${businessId}/${targetPromotionId}`)
   }
 
-  const initialPromotion = promotions.find((promo) => promo.id === promoParam)?.id ?? null
-
-  const businessRecord = business as BusinessRow
-  const businessSettings = (businessRecord.settings ?? {}) as Record<string, any>
-  const cardTitle = typeof businessSettings.card_title === 'string' && businessSettings.card_title.trim().length > 0
-    ? businessSettings.card_title.trim()
-    : businessRecord.name
-  const cardDescription = typeof businessSettings.card_description === 'string' && businessSettings.card_description.trim().length > 0
-    ? businessSettings.card_description.trim()
-    : businessRecord.description ?? 'Activa tu tarjeta digital y acumula recompensas sin volver a rellenar formularios.'
+  const business = joinData.business as BusinessRow
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10 space-y-10">
-      <header className="space-y-3 text-center">
-        {businessRecord.logo_url && (
-          <div className="flex justify-center">
-            <img
-              src={businessRecord.logo_url}
-              alt={`Logo de ${businessRecord.name}`}
-              className="h-16 w-16 rounded-lg object-cover shadow"
-            />
-          </div>
-        )}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">{cardTitle}</h1>
-          <p className="text-sm text-gray-600 mt-2">{cardDescription}</p>
-        </div>
-      </header>
-
-      <QuickJoinForm
-        businessId={businessId}
-        businessName={businessRecord.name}
-        promotions={promotions}
-        loyaltyCard={loyaltyCard}
-        initialPromotionId={initialPromotion}
-      />
-
-      <section className="border rounded-lg bg-gray-50 px-4 py-5 text-sm text-gray-600 space-y-2">
-        <h2 className="text-base font-semibold text-gray-800">¿Qué ocurre ahora?</h2>
-        <ul className="list-disc list-inside space-y-1">
-          <li>La primera vez guardamos tus datos de contacto y te entregamos la tarjeta digital de esta tienda.</li>
-          <li>Si ya estabas registrado, solo necesitamos tu email o teléfono para añadir la nueva tarjeta automáticamente.</li>
-          <li>Podrás mostrar el código QR desde tu wallet para sumar sellos o canjear recompensas en el punto de venta.</li>
-        </ul>
-      </section>
-
-      <section className="border rounded-lg bg-white shadow-sm px-4 py-5 text-sm text-gray-600 space-y-2">
-        <h3 className="text-base font-semibold text-gray-800">Fase 2 · App de gestión</h3>
-        <p>
-          Estamos preparando una aplicación donde podrás consultar todas tus tarjetas, ver el progreso de cada promoción
-          y administrar las recompensas obtenidas. Esta app será opcional: en la fase actual puedes usar el sistema solo con tu Wallet.
-        </p>
-      </section>
+    <div className="mx-auto max-w-2xl space-y-6 px-6 py-10 text-center">
+      <h1 className="text-2xl font-bold text-gray-900">Sin promociones disponibles</h1>
+      <p className="text-sm text-gray-600">
+        {business.name} no tiene promociones activas en este momento. Pide al comercio que active una campaña para que puedas obtener tu tarjeta.
+      </p>
+      <Link href="/" className="inline-flex items-center justify-center rounded bg-indigo-600 px-4 py-2 text-white">
+        Volver al inicio
+      </Link>
     </div>
   )
 }

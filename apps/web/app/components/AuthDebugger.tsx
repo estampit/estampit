@@ -10,10 +10,7 @@ export function AuthDebugger() {
   const [bizError, setBizError] = useState<string | null>(null)
   const pathname = usePathname()
 
-  if (pathname === '/' || pathname?.startsWith('/demo')) {
-    return null
-  }
-
+  // Los hooks SIEMPRE deben ejecutarse antes de cualquier return
   useEffect(() => {
     async function loadBusinesses() {
       if (!user) return
@@ -29,6 +26,11 @@ export function AuthDebugger() {
     }
     loadBusinesses()
   }, [user])
+
+  // Ahora sí podemos hacer el return condicional
+  if (pathname === '/' || pathname?.startsWith('/demo')) {
+    return null
+  }
 
   const info = {
     hasUser: !!user,

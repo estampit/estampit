@@ -18,6 +18,19 @@ type PendingReward = {
   redeemed_at: string | null
 }
 
+type PromotionRow = {
+  id: string
+  business_id: string
+  name: string
+  description: string | null
+  promo_type: string
+  starts_at: string | null
+  ends_at: string | null
+  is_active: boolean
+  reward_description: string | null
+  config: Record<string, any> | null
+}
+
 function sanitizeEmail(value?: string | null) {
   return value?.trim().toLowerCase() || null
 }
@@ -75,6 +88,10 @@ export async function POST(
     return NextResponse.json({ success: false, error: 'identifier_required' }, { status: 400 })
   }
 
+  if (!promotionId) {
+    return NextResponse.json({ success: false, error: 'promotion_required' }, { status: 400 })
+  }
+
   const { data: business, error: businessError } = await admin
     .from('businesses')
     .select('id,name,description,logo_url,settings')
@@ -86,6 +103,24 @@ export async function POST(
   }
 
   const businessUuid = business.id
+
+  const { data: promotion, error: promotionError } = await admin
+    .from('promotions')
+    .select('id,business_id,name,description,promo_type,starts_at,ends_at,is_active,reward_description,config')
+    .eq('id', promotionId)
+    .eq('business_id', businessUuid)
+    .maybeSingle<PromotionRow>()
+
+  if (promotionError || !promotion) {
+    return NextResponse.json({ success: false, error: 'promotion_not_found' }, { status: 404 })
+  }
+
+  const now = new Date()
+  const startsAt = promotion.starts_at ? new Date(promotion.starts_at) : null
+  const endsAt = promotion.ends_at ? new Date(promotion.ends_at) : null
+  if (promotion.is_active !== true || (startsAt && startsAt > now) || (endsAt && endsAt < now)) {
+    return NextResponse.json({ success: false, error: 'promotion_inactive' }, { status: 400 })
+  }
 
   const { data: loyaltyCard, error: cardError } = await admin
     .from('loyalty_cards')
@@ -191,10 +226,11 @@ export async function POST(
   }
 
   const { data: ensureResult, error: ensureError } = await admin.rpc(
-    'ensure_customer_card_and_pass_for_user',
+    'ensure_customer_card_and_pass_for_promotion',
     {
       p_business_id: businessUuid,
-      p_customer_id: userId
+      p_customer_id: userId,
+      p_promotion_id: promotion.id
     }
   )
 
@@ -271,6 +307,15 @@ export async function POST(
   const currentStamps = cardDetail.current_stamps ?? 0
   const remainingStamps = stampsRequired > 0 ? Math.max(stampsRequired - currentStamps, 0) : 0
 
+  const { data: usageRow } = await admin
+    .from('promotion_usages')
+    .select('usage_count,last_used_at')
+    .eq('promotion_id', promotion.id)
+    .eq('customer_id', userId)
+    .maybeSingle()
+
+  const promotionUsageCount = usageRow?.usage_count ?? 0
+
   const businessSettings = (business?.settings ?? {}) as Record<string, any>
   const businessResponse = {
     id: business.id,
@@ -310,6 +355,13 @@ export async function POST(
         email: resolvedEmail,
         phone: resolvedPhone
       },
+      promotion: {
+        id: promotion.id,
+        name: promotion.name,
+        description: promotion.description,
+        reward_description: promotion.reward_description,
+        ends_at: promotion.ends_at
+      },
       business: businessResponse,
       loyaltyCard,
       promotionId,
@@ -326,7 +378,8 @@ export async function POST(
         reused: Boolean(walletPassEnvelope.reused),
         pass_type: walletPassRow.pass_type ?? 'generic',
         usage_count: walletPassRow.usage_count ?? 0,
-        last_used_at: walletPassRow.last_used_at ?? null
+        last_used_at: walletPassRow.last_used_at ?? null,
+        promotion_id: walletPassRow.promotion_id ?? promotion.id
       },
       downloadUrl,
       metrics: {
@@ -334,7 +387,8 @@ export async function POST(
         stampsRequired,
         remainingStamps,
         totalRewardsEarned: cardDetail.total_rewards_earned ?? 0,
-        pendingRewards: pendingRewards.length
+        pendingRewards: pendingRewards.length,
+        promotionUsageCount
       },
       pendingRewards
     }

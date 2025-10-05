@@ -8,6 +8,7 @@ type Metrics = {
   remainingStamps: number
   totalRewardsEarned: number
   pendingRewards: number
+  promotionUsageCount?: number
 }
 
 type LoyaltyCardInfo = {
@@ -127,6 +128,12 @@ export function WalletPassCard({
             <p className="text-teal-600 font-semibold">{metrics.pendingRewards}</p>
             <p className="text-gray-600">Recompensas pendientes</p>
           </div>
+          {typeof metrics.promotionUsageCount === 'number' && (
+            <div className="bg-amber-50 border border-amber-100 rounded p-3">
+              <p className="text-amber-600 font-semibold">{metrics.promotionUsageCount}</p>
+              <p className="text-gray-600">Escaneos de esta promoción</p>
+            </div>
+          )}
         </div>
 
         {pendingRewards && pendingRewards.length > 0 && (

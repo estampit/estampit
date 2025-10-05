@@ -13,7 +13,6 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { ArrowUpRight, Sparkles, Users, TrendingUp, Wand2 } from 'lucide-react'
-import { BusinessJoinQR } from '@/app/components/BusinessJoinQR'
 import { UniversalScanner } from '@/app/components/UniversalScanner'
 import { RedeemWalletPass } from '@/app/components/RedeemWalletPass'
 import { EventsFeedClient, type BusinessEventRow } from '@/app/components/EventsFeedClient'
@@ -345,7 +344,6 @@ export function OverviewSection({
           <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-semibold text-neutral-900">Herramientas rápidas</h3>
             <div className="mt-4 space-y-4">
-              <BusinessJoinQR businessId={businessId} businessName={business.name} />
               <UniversalScanner businessId={businessId} />
               <RedeemWalletPass businessId={businessId} />
             </div>

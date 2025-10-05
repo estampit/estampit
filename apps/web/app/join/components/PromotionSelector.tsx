@@ -7,6 +7,8 @@ type Promotion = {
   name: string
   promo_type: string
   ends_at?: string | null
+  description?: string | null
+  config?: Record<string, any> | null
 }
 
 interface PromotionSelectorProps {
@@ -34,7 +36,14 @@ export function PromotionSelector({ promotions, selectedId, onSelect }: Promotio
 
   if (!sortedPromotions.length) {
     return (
-      <div className="text-sm text-gray-500 border rounded p-3 bg-gray-50">
+      <div
+        className="rounded border p-3 text-sm"
+        style={{
+          color: 'var(--join-text-muted)',
+          backgroundColor: 'var(--join-surface-muted)',
+          borderColor: 'var(--join-border)'
+        }}
+      >
         No hay promociones activas ahora mismo. ¡Sigue acumulando sellos para desbloquear recompensas!
       </div>
     )
@@ -42,7 +51,7 @@ export function PromotionSelector({ promotions, selectedId, onSelect }: Promotio
 
   return (
     <div className="space-y-2">
-      <p className="text-sm text-gray-600">Selecciona la promoción que quieres activar:</p>
+      <p className="text-sm text-[color:var(--join-text-muted)]">Selecciona la promoción que quieres activar:</p>
       <div className="grid gap-2">
         {sortedPromotions.map((promo) => {
           const isSelected = selectedId === promo.id
@@ -52,21 +61,33 @@ export function PromotionSelector({ promotions, selectedId, onSelect }: Promotio
               key={promo.id}
               type="button"
               onClick={() => onSelect(isSelected ? null : promo.id)}
-              className={`text-left border rounded px-4 py-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                isSelected
-                  ? 'border-indigo-500 bg-indigo-50'
-                  : 'border-gray-200 bg-white hover:border-indigo-300'
-              }`}
+              className="text-left rounded border px-4 py-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--join-primary)] hover:border-[var(--join-primary)]"
+              style={{
+                borderColor: isSelected ? 'var(--join-primary)' : 'var(--join-border)',
+                backgroundColor: isSelected ? 'var(--join-surface-muted)' : 'var(--join-surface)',
+                color: 'var(--join-text)'
+              }}
             >
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="font-medium text-sm text-gray-900">{promo.name}</p>
-                  <p className="text-xs text-gray-500 capitalize">Tipo: {promo.promo_type}</p>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[color:var(--join-text)]">{promo.name}</p>
+                  {promo.description && (
+                    <p className="text-xs leading-5 text-[color:var(--join-text-muted)]">{promo.description}</p>
+                  )}
+                  <p className="text-xs text-[color:var(--join-text-muted)] capitalize">
+                    Tipo: <span className="font-semibold text-[color:var(--join-text)]">{promo.promo_type}</span>
+                  </p>
                 </div>
                 {ends && (
-                  <span className="text-xs text-indigo-600 font-medium">Hasta {ends}</span>
+                  <span className="text-xs font-medium text-[color:var(--join-primary)]">Hasta {ends}</span>
                 )}
               </div>
+              {isSelected && (
+                <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[color:var(--join-primary)]">
+                  <span className="inline-flex h-2 w-2 rounded-full bg-[color:var(--join-primary)]" />
+                  Seleccionada
+                </div>
+              )}
             </button>
           )
         })}

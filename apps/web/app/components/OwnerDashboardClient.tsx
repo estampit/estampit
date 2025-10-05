@@ -8,6 +8,7 @@ import { CustomerDetailDrawer } from './dashboard/owner/CustomerDetailDrawer'
 import { RealtimeAlerts } from './dashboard/owner/RealtimeAlerts'
 import type { BusinessEventRow } from './EventsFeedClient'
 import { getSupabaseClient } from '@/lib/supabaseClient'
+import QRCode from 'qrcode'
 import toast from 'react-hot-toast'
 
 interface Promotion {
@@ -50,6 +51,8 @@ export interface PromotionUsage {
   promotion_id: string
   usage_count: number
   name?: string
+  pending_rewards?: number
+  last_used_at?: string | null
 }
 
 export interface TrendDatum {
@@ -125,7 +128,22 @@ export function OwnerDashboardClient() {
   const [orderBy, setOrderBy] = useState<'created_at' | 'priority' | 'ends_at'>('created_at')
   const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc')
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const [qrPromoId, setQrPromoId] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const selectedCustomerRef = useRef<CustomerSummary | null>(null)
+
+  useEffect(() => {
+    if (qrPromoId && business) {
+      const url = `${window.location.origin}/join/${business.id}/${qrPromoId}`
+      QRCode.toDataURL(url, { width: 256, margin: 2 }, (err, dataUrl) => {
+        if (!err) {
+          setQrDataUrl(dataUrl)
+        }
+      })
+    } else {
+      setQrDataUrl(null)
+    }
+  }, [qrPromoId, business])
 
   useEffect(() => {
     selectedCustomerRef.current = selectedCustomer
@@ -896,6 +914,7 @@ export function OwnerDashboardClient() {
                             <div className="flex gap-1">
                               <button onClick={()=> { setEditingPromoId(p.id); setEditDraft({ name: p.name, priority: (p as any).priority, ends_at: p.ends_at }) }} className="text-[11px] px-2 py-1 rounded border">Editar</button>
                               <button onClick={()=> performDelete(p.id)} className="text-[11px] px-2 py-1 rounded border text-red-600">Borrar</button>
+                              <button onClick={()=> setQrPromoId(p.id)} className="text-[11px] px-2 py-1 rounded border bg-blue-600 text-white">Ver QR</button>
                             </div>
                           </div>
                         )}
@@ -1095,6 +1114,45 @@ export function OwnerDashboardClient() {
           </div>
         )}
       </div>
+      {qrPromoId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Código QR de la Promoción</h3>
+            {qrDataUrl ? (
+              <div className="text-center">
+                <img src={qrDataUrl} alt="QR Code" className="mx-auto mb-4" />
+                <p className="text-sm text-gray-600 mb-2">Promotion ID: {qrPromoId}</p>
+                <p className="text-xs text-gray-500 mb-4">Escanea este QR para unirte a la promoción</p>
+                <button
+                  onClick={() => navigator.clipboard.writeText(`${window.location.origin}/join/${business.id}/${qrPromoId}`)}
+                  className="text-xs bg-blue-600 text-white px-3 py-1 rounded mr-2"
+                >
+                  Copiar Enlace
+                </button>
+                <button
+                  onClick={() => {
+                    const link = document.createElement('a')
+                    link.href = qrDataUrl
+                    link.download = `qr-promotion-${qrPromoId}.png`
+                    link.click()
+                  }}
+                  className="text-xs bg-green-600 text-white px-3 py-1 rounded"
+                >
+                  Descargar QR
+                </button>
+              </div>
+            ) : (
+              <p className="text-center">Generando QR...</p>
+            )}
+            <button
+              onClick={() => setQrPromoId(null)}
+              className="mt-4 w-full bg-gray-600 text-white py-2 rounded"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
       <CustomerDetailDrawer
         open={Boolean(selectedCustomer)}
         customer={selectedCustomer}

@@ -19,11 +19,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
-    // Obtener sesión inicial
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    // In development, sign out to force re-auth for testing
+    const initAuth = async () => {
+      // Obtener sesión inicial
+      const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
       setLoading(false)
-    })
+    }
+
+    initAuth()
 
     // Escuchar cambios de autenticación
     const {
