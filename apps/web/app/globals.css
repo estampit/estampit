@@ -2,20 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+:root {
+  color-scheme: light;
 }
 
-/* Custom styles for MYSTAMP */
+body {
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: linear-gradient(180deg, #f8f9fc 0%, #eef1f8 35%, #ffffff 100%);
+  min-height: 100vh;
+}
+
+::selection {
+  background-color: rgba(122, 95, 255, 0.35);
+  color: #140940;
+}
+
+/* Utilities */
 .mystamp-gradient {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: radial-gradient(circle at 15% 20%, rgba(122, 95, 255, 0.6), transparent 55%),
+    radial-gradient(circle at 90% 10%, rgba(43, 214, 191, 0.4), transparent 60%),
+    linear-gradient(135deg, #140940 0%, #22106f 45%, #5a31f4 100%);
 }
 
 .card-hover {
-  transition: all 0.3s ease;
+  transition: transform 0.35s ease, box-shadow 0.35s ease;
 }
 
 .card-hover:hover {
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-  transform: scale(1.05);
+  box-shadow: 0 22px 55px -28px rgba(15, 16, 45, 0.45);
+  transform: translateY(-4px) scale(1.01);
 }

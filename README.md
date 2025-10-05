@@ -139,6 +139,18 @@ npm run type-check   # Verificación de tipos TypeScript
 npm run verify:remote # Verifica que el esquema remoto coincida con lo esperado
 ```
 
+### GitHub Pages para entorno público de prueba
+
+El repositorio incluye una landing mínima en `docs/` (`index.md`, `privacy.md`, `terms.md`) preparada para cumplir los requisitos de Google OAuth mientras no exista un dominio propio. Para publicarla:
+
+1. Sube tus cambios a `main`.
+2. En GitHub ve a **Settings → Pages**.
+3. En **Build and deployment** selecciona `Deploy from a branch`.
+4. Escoge la rama `main` y la carpeta `/docs`.
+5. Guarda. GitHub generará una URL del tipo `https://<tu-usuario>.github.io/<repo>/` en unos minutos.
+
+Usa esas URLs en la pantalla de consentimiento de Google (home, privacidad y términos) y como dominio autorizado mientras configuras tu dominio definitivo.
+
 ## 🔐 Seguridad y Buenas Prácticas
 
 La plataforma aplica una estrategia de "defensa en profundidad". A continuación se detallan los principios y pautas que debes seguir para mantener la seguridad conforme el proyecto crece.

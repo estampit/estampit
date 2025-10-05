@@ -65,7 +65,94 @@ xcrun simctl openurl booted "file://$(pwd)/test.pass"
 node test-wallet.js
 ```
 
-## 📁 Archivos Importantes
+### Opción 4: Firmar el JSON con tus certificados
+```bash
+# Instala la dependencia si aún no lo hiciste
+npm install
+
+# Genera el .pkpass a partir del JSON descargado
+node scripts/build-wallet-pass.mjs wallet-pass.json ./out/wallet.pkpass
+```
+Coloca tus certificados en `apps/web/public/pass-assets` o exporta las variables `PASS_WWDR_CERT`, `PASS_SIGNER_CERT`, `PASS_SIGNER_KEY` y `PASS_SIGNER_PASSPHRASE` antes de ejecutar el script.
+
+### Opción 5: Pasar por PassKit (plan gratuito)
+1. Crea una cuenta gratuita en [PassKit](https://dashboard.passkit.com/) y define una campaña/membership template.
+2. En el dashboard, toma la región (`pub1` para Europa) y las credenciales REST (key/secret) que ya tienes.
+3. Guarda las credenciales en un archivo `.env.local` (fuera de git):
+  ```bash
+  PASSKIT_API_PREFIX=https://api.pub1.passkit.io
+  PASSKIT_REST_KEY=3GLlw7ZdriWveuV8A5M3QU
+  PASSKIT_REST_SECRET=Guex0OhD2TC8FZq0BPehryiohxwGAk1Jy4BMt59d
+  PASSKIT_TEMPLATE_ID=TU_TEMPLATE_ID
+  ```
+4. Usa el script `scripts/passkit-issue-pass.mjs` (ver abajo) para enviar `wallet-pass.json` y obtener la URL de descarga del pass hospedado por PassKit.
+5. Comparte esa URL o el QR generado por PassKit para añadirlo a Wallet sin certificados propios.
+
+> 🔒 **Importante**: nunca subas key/secret a git. Usa `.env.local` o un secret manager.
+
+## � Configurar Apple Wallet en tu cuenta
+
+1. **Paga la membresía Apple Developer (USD 99/año)**
+  - Ve a [https://developer.apple.com/programs/enroll/](https://developer.apple.com/programs/enroll/).
+  - Inicia sesión con tu Apple ID, completa los datos fiscales y de facturación, y finaliza el pago.
+  - Si tu empresa ya tiene una suscripción activa, pide acceso y evita pagos duplicados.
+
+2. **Descarga el certificado WWDR (G4)**
+  - Visita [https://www.apple.com/certificateauthority/](https://www.apple.com/certificateauthority/).
+  - Descarga “Worldwide Developer Relations – G4.cer”.
+
+3. **Crea un Pass Type ID**
+  - En la consola developer ve a **Certificates, IDs & Profiles → Identifiers**.
+  - Pulsa **+** → selecciona **Pass Type IDs** → continúa.
+  - Define nombre e identifier (p. ej. `pass.com.tuempresa.loyalty`). Guarda.
+
+4. **Genera un CSR en macOS**
+  - Abre **Acceso a Llaveros → Asistente de Certificados → Solicitar un certificado de una autoridad**.
+  - Usa el correo de la cuenta developer, elige “Guardado en disco”. Obtendrás `pass.csr`.
+
+5. **Emite el certificado del pass**
+  - Desde el Pass Type ID creado, entra en **Certificates**.
+  - Pulsa **Create Certificate**, sube `pass.csr` y descarga el `.cer` generado (p. ej. `pass-signing.cer`). Ábrelo para añadirlo al llavero; la clave privada queda asociada automáticamente.
+
+6. **Exporta certificados y claves**
+  - En Acceso a Llaveros selecciona **Worldwide Developer Relations Certification Authority** → **Archivo → Exportar** → guarda en `.cer`.
+  - Selecciona el certificado del Pass Type ID → **Archivo → Exportar** → formato `.p12`, define un password (será tu `PASS_SIGNER_PASSPHRASE`).
+
+7. **Convierte a PEM en terminal**
+  ```bash
+  # WWDR
+  openssl x509 -inform der -in WWDR_G4.cer -out wwdr.pem
+
+  # Certificado y clave del pass
+  openssl pkcs12 -in pass-signing.p12 -clcerts -nokeys -out signerCert.pem
+  openssl pkcs12 -in pass-signing.p12 -nocerts -out signerKey.pem
+
+  # (Opcional) eliminar passphrase de la clave privada
+  openssl rsa -in signerKey.pem -out signerKey.pem
+  ```
+
+8. **Coloca los archivos en el proyecto**
+  - Copia `wwdr.pem`, `signerCert.pem` y `signerKey.pem` a `apps/web/public/pass-assets/`.
+  - Guarda la contraseña del `.p12` en un gestor de secretos y expórtala como `PASS_SIGNER_PASSPHRASE` si la clave privada aún está protegida.
+
+9. **Genera el pass firmado**
+  ```bash
+  cd /Users/luistorrentenaveira/Documents/STAMPIT
+  node scripts/build-wallet-pass.mjs ~/Downloads/wallet-pass.json ./out/wallet.pkpass
+  ```
+  - El script crea `./out` si no existe. Si tus archivos están en otra ruta, exporta `PASS_WWDR_CERT`, `PASS_SIGNER_CERT`, `PASS_SIGNER_KEY` y `PASS_SIGNER_PASSPHRASE` antes de correrlo.
+  - El `.pkpass` generado se puede mandar por AirDrop al iPhone o servirlo desde un endpoint.
+
+  > 🛠️ **Tip**: puedes automatizar la conversión de certificados con `./scripts/setup-wallet-certificates.sh`. Ejecuta:
+  > ```bash
+  > chmod +x scripts/setup-wallet-certificates.sh
+  > ./scripts/setup-wallet-certificates.sh -c ~/Downloads/AppleWWDRCAG4.cer -p ~/Downloads/pass-signing.p12
+  > ```
+  > Esto genera `wwdr.pem`, `signerCert.pem` y `signerKey.pem` dentro de `apps/web/public/pass-assets/`.
+
+> 📌 **Tip**: guarda los `.pem` y la passphrase fuera del repositorio (Git no debe contenerlos). Usa un secrets manager o tu herramienta de despliegue.
+
+## �📁 Archivos Importantes
 
 - **`/app/api/wallet/download/route.ts`** - Endpoint que genera el JSON del pass
 - **`/app/components/WalletPassQR.tsx`** - Componente que muestra QR y botón de descarga

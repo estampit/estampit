@@ -13,6 +13,7 @@ export async function createPromotion(input: {
   config?: Record<string, any>
   priority?: number
   endsAt?: string | null
+  startsAt?: string | null
 }) {
   const supabase = await getServerSupabase()
   const { data: { user } } = await supabase.auth.getUser()
@@ -26,6 +27,7 @@ export async function createPromotion(input: {
     promo_type: input.promoType,
     config: input.config ?? {},
     priority: input.priority ?? 100,
+    starts_at: input.startsAt ?? new Date().toISOString(),
     ends_at: input.endsAt ?? null
   }).select('*').single()
   if (error) return { success: false, error: error.message }

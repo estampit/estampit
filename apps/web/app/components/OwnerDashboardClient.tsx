@@ -1,13 +1,12 @@
 "use client"
-import { useCallback, useEffect, useState, useTransition } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts'
-import { PromotionForm } from './PromotionForm'
-import { RedeemWalletPass } from './RedeemWalletPass'
-import { EventsFeedClient } from './EventsFeedClient'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { CampaignWizard } from './CampaignWizard'
 import { StaffManagement } from './StaffManagement'
-import { BusinessJoinQR } from './BusinessJoinQR'
-import { UniversalScanner } from './UniversalScanner'
 import { BusinessAppearanceForm } from './BusinessAppearanceForm'
+import { OverviewSection } from './dashboard/owner/OverviewSection'
+import { CustomerDetailDrawer } from './dashboard/owner/CustomerDetailDrawer'
+import { RealtimeAlerts } from './dashboard/owner/RealtimeAlerts'
+import type { BusinessEventRow } from './EventsFeedClient'
 import { getSupabaseClient } from '@/lib/supabaseClient'
 import toast from 'react-hot-toast'
 
@@ -19,9 +18,11 @@ interface Promotion {
   created_at: string
   ends_at: string | null
   usage_count?: number
+  priority?: number | null
+  config?: Record<string, any>
 }
 
-interface BusinessSummary {
+export interface BusinessSummary {
   id: string
   name: string
   logo_url?: string | null
@@ -37,20 +38,84 @@ interface BusinessSummary {
   active_promotions?: number
 }
 
-type TabId = 'overview' | 'promotions' | 'customers' | 'appearance' | 'staff'
+export interface DashboardMetrics {
+  stampsToday: number
+  stampsWeek: number
+  redemptionsWeek: number
+  topPromo?: string
+  trendLabel?: string
+}
+
+export interface PromotionUsage {
+  promotion_id: string
+  usage_count: number
+  name?: string
+}
+
+export interface TrendDatum {
+  day: string
+  stamps: number
+  redemptions: number
+}
+
+export interface CustomerSegment {
+  segment: string
+  customers: number
+  avg_stamps?: number
+}
+
+export interface CustomerSummary {
+  customer_id: string
+  customer_email: string | null
+  customer_name?: string | null
+  current_stamps: number
+  total_rewards: number
+  last_stamp_at: string | null
+  loyalty_card_id: string
+  customer_card_id: string
+  total_spent?: number | null
+}
+
+export interface CustomerActivityEntry {
+  id: string
+  occurredAt: string
+  label: string
+  type: 'event' | 'purchase'
+  amount?: number
+  currency?: string
+  stamps?: number
+  description?: string
+  metadata?: Record<string, any> | null
+}
+
+export interface LiveAlert {
+  id: string
+  type: string
+  message: string
+  occurredAt: string
+}
+
+export type TabId = 'overview' | 'promotions' | 'customers' | 'appearance' | 'staff'
 
 export function OwnerDashboardClient() {
   const supabase = getSupabaseClient()
   const [loading, setLoading] = useState(true)
   const [business, setBusiness] = useState<BusinessSummary | null>(null)
   const [promotions, setPromotions] = useState<Promotion[]>([])
-  const [metrics, setMetrics] = useState<{ stampsToday: number; stampsWeek: number; redemptionsWeek: number; topPromo?: string } | null>(null)
-  const [promoUsage, setPromoUsage] = useState<{ promotion_id: string; usage_count: number; name?: string}[]>([])
-  const [trendData, setTrendData] = useState<any[]>([])
-  const [loyaltyCardId, setLoyaltyCardId] = useState<string | null>(null)
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
+  const [promoUsage, setPromoUsage] = useState<PromotionUsage[]>([])
+  const [trendData, setTrendData] = useState<TrendDatum[]>([])
   const [pending, startTransition] = useTransition()
-  const [customerAnalytics, setCustomerAnalytics] = useState<any|null>(null)
-  const [customerSegments, setCustomerSegments] = useState<any[]>([])
+  const [customerAnalytics, setCustomerAnalytics] = useState<any | null>(null)
+  const [customerSegments, setCustomerSegments] = useState<CustomerSegment[]>([])
+  const [customers, setCustomers] = useState<CustomerSummary[]>([])
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [customerSegmentFilter, setCustomerSegmentFilter] = useState<'all' | 'loyal' | 'at-risk' | 'new'>('all')
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSummary | null>(null)
+  const [customerActivity, setCustomerActivity] = useState<CustomerActivityEntry[]>([])
+  const [customerActivityLoading, setCustomerActivityLoading] = useState(false)
+  const [recentEvents, setRecentEvents] = useState<BusinessEventRow[]>([])
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([])
   const [promoPage, setPromoPage] = useState(1)
   const [promoFilters, setPromoFilters] = useState<{ status?: string; type?: string; search?: string }>({})
   const pageSize = 25
@@ -60,6 +125,151 @@ export function OwnerDashboardClient() {
   const [orderBy, setOrderBy] = useState<'created_at' | 'priority' | 'ends_at'>('created_at')
   const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc')
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const selectedCustomerRef = useRef<CustomerSummary | null>(null)
+
+  useEffect(() => {
+    selectedCustomerRef.current = selectedCustomer
+  }, [selectedCustomer])
+
+  const filteredCustomers = useMemo(() => {
+    const normalizedSearch = customerSearch.trim().toLowerCase()
+    const now = Date.now()
+
+    const filtered = customers.filter((customer) => {
+      if (normalizedSearch) {
+        const matchesEmail = (customer.customer_email ?? '').toLowerCase().includes(normalizedSearch)
+        const matchesName = (customer.customer_name ?? '').toLowerCase().includes(normalizedSearch)
+        if (!matchesEmail && !matchesName) {
+          return false
+        }
+      }
+
+      if (customerSegmentFilter === 'loyal') {
+        return customer.current_stamps >= 8
+      }
+
+      if (customerSegmentFilter === 'at-risk') {
+        if (!customer.last_stamp_at) return true
+        const lastStamp = new Date(customer.last_stamp_at).getTime()
+        const daysSince = (now - lastStamp) / (1000 * 60 * 60 * 24)
+        return daysSince >= 30
+      }
+
+      if (customerSegmentFilter === 'new') {
+        if (!customer.last_stamp_at) return true
+        const lastStamp = new Date(customer.last_stamp_at).getTime()
+        const daysSince = (now - lastStamp) / (1000 * 60 * 60 * 24)
+        return daysSince <= 14
+      }
+
+      return true
+    })
+
+    return filtered.sort((a, b) => b.current_stamps - a.current_stamps)
+  }, [customers, customerSearch, customerSegmentFilter])
+
+  const normalizeEventMetadata = useCallback((value: any): Record<string, any> | null => {
+    if (!value) return null
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value)
+      } catch {
+        return { raw: value }
+      }
+    }
+    return value
+  }, [])
+
+  const eventMatchesCustomer = useCallback((event: BusinessEventRow, customer: CustomerSummary) => {
+    const metadata = event.metadata ?? {}
+    const candidateIds = [
+      metadata.customer_id,
+      metadata.customerId,
+      metadata.customer?.id,
+      metadata.customer_card_id,
+      metadata.customerCardId,
+      metadata.customer_card?.id,
+    ].filter(Boolean) as string[]
+
+    if (candidateIds.some((id) => id === customer.customer_id || id === customer.customer_card_id)) {
+      return true
+    }
+
+    const candidateEmails = [
+      metadata.customer_email,
+      metadata.customer?.email,
+      metadata.email,
+    ]
+      .filter(Boolean)
+      .map((email: string) => email.toLowerCase())
+
+    if (customer.customer_email && candidateEmails.includes(customer.customer_email.toLowerCase())) {
+      return true
+    }
+
+    return false
+  }, [])
+
+  const mapEventToActivity = useCallback((event: BusinessEventRow): CustomerActivityEntry => {
+    const metadata = event.metadata ?? {}
+    const readableType = event.event_type.replace(/_/g, ' ')
+    const amount = typeof metadata.amount === 'number' ? metadata.amount : undefined
+    const currency = typeof metadata.currency === 'string' ? metadata.currency : undefined
+    const stamps = typeof metadata.stamps === 'number'
+      ? metadata.stamps
+      : typeof metadata.stamps_awarded === 'number'
+        ? metadata.stamps_awarded
+        : undefined
+    const description = (metadata.summary || metadata.message || metadata.description || metadata.reward_title || metadata.reward_description || '') as string
+
+    return {
+      id: event.id,
+      occurredAt: event.created_at,
+      label: readableType.charAt(0).toUpperCase() + readableType.slice(1),
+      type: 'event',
+      amount,
+      currency,
+      stamps,
+      description: description ? description.trim() : undefined,
+      metadata,
+    }
+  }, [])
+
+  const buildAlertFromEvent = useCallback((event: BusinessEventRow): LiveAlert | null => {
+    const metadata = event.metadata ?? {}
+    const readableType = event.event_type.replace(/_/g, ' ')
+    const capitalizedType = readableType.charAt(0).toUpperCase() + readableType.slice(1)
+
+    let message = metadata.summary || metadata.message || ''
+    if (!message) {
+      if (metadata.customer_name) {
+        message = `${metadata.customer_name} · ${capitalizedType}`
+      } else if (metadata.customer_email) {
+        message = `${metadata.customer_email} · ${capitalizedType}`
+      } else {
+        message = capitalizedType
+      }
+    }
+
+    return {
+      id: `${event.id}`,
+      type: event.event_type,
+      message: message,
+      occurredAt: event.created_at,
+    }
+  }, [])
+
+  const formatLastActivity = useCallback((iso: string | null) => {
+    if (!iso) return 'Sin actividad'
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return 'Sin actividad'
+    const diffMs = Date.now() - date.getTime()
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    if (days <= 0) return 'Hoy'
+    if (days === 1) return 'Hace 1 día'
+    if (days < 30) return `Hace ${days} días`
+    return date.toLocaleDateString()
+  }, [])
 
   const tabs: ReadonlyArray<{ id: TabId; name: string; icon: string }> = [
     { id: 'overview', name: 'Vista General', icon: '📊' },
@@ -119,14 +329,6 @@ export function OwnerDashboardClient() {
         total_rewards: rawBusiness.total_rewards ?? rawBusiness.metrics_total_rewards ?? 0,
         active_promotions: rawBusiness.active_promotions ?? rawBusiness.metrics_active_promotions ?? 0,
       })
-
-      const { data: cards } = await supabase
-        .from('loyalty_cards')
-        .select('id')
-        .eq('business_id', rawBusiness.id)
-        .order('created_at', { ascending: true })
-        .limit(1)
-      setLoyaltyCardId(cards?.[0]?.id ?? null)
 
       const nowIso = new Date().toISOString()
       let promoQuery = supabase
@@ -195,7 +397,9 @@ export function OwnerDashboardClient() {
         redemptionsWeekRes,
         trendSeriesRes,
         analyticsRes,
-        segmentsRes
+        segmentsRes,
+        customersRes,
+        eventsRes
       ] = await Promise.all([
         supabase.rpc('get_promotion_usage', { p_business_id: rawBusiness.id } as any).catch(() => ({ data: null })),
         supabase.rpc('get_stamps_stats', { p_business_id: rawBusiness.id, p_range: 'today' } as any).catch(() => ({ data: null })),
@@ -203,16 +407,26 @@ export function OwnerDashboardClient() {
         supabase.rpc('get_redemptions_stats', { p_business_id: rawBusiness.id, p_range: '7d' } as any).catch(() => ({ data: null })),
         supabase.rpc('get_stamps_timeseries', { p_business_id: rawBusiness.id, p_days: 14 } as any).catch(() => ({ data: null })),
         supabase.rpc('get_customer_analytics', { p_business_id: rawBusiness.id, p_days: 30 } as any).catch(() => ({ data: null })),
-        supabase.rpc('get_customer_segments', { p_business_id: rawBusiness.id, p_days: 30 } as any).catch(() => ({ data: null }))
+        supabase.rpc('get_customer_segments', { p_business_id: rawBusiness.id, p_days: 30 } as any).catch(() => ({ data: null })),
+        supabase.rpc('get_customer_dashboard_data', { p_business_id: rawBusiness.id, p_limit: 200 } as any).catch(() => ({ data: [] })),
+        supabase
+          .from('events')
+          .select('id,event_type,created_at,metadata')
+          .eq('business_id', rawBusiness.id)
+          .order('created_at', { ascending: false })
+          .limit(50)
+          .catch(() => ({ data: [] }))
       ])
 
       if (promoUsageRes?.data) {
         const nameMap: Record<string, string> = {}
         promoList.forEach(p => { nameMap[p.id] = p.name })
-        setPromoUsage((promoUsageRes.data as any[]).map((entry: any) => ({
-          ...entry,
-          name: nameMap[entry.promotion_id] ?? entry.promotion_id
-        })))
+        const usage = (promoUsageRes.data as any[]).map((entry: any): PromotionUsage => ({
+          promotion_id: entry.promotion_id,
+          usage_count: entry.usage_count ?? 0,
+          name: nameMap[entry.promotion_id] ?? entry.promotion_id,
+        }))
+        setPromoUsage(usage)
       } else {
         setPromoUsage([])
       }
@@ -221,6 +435,7 @@ export function OwnerDashboardClient() {
         stampsToday: stampsTodayRes?.data?.count ?? 0,
         stampsWeek: stampsWeekRes?.data?.count ?? 0,
         redemptionsWeek: redemptionsWeekRes?.data?.count ?? 0,
+        trendLabel: stampsTodayRes?.data?.trend_label ?? undefined,
         topPromo: (() => {
           const usage = (promoUsageRes?.data as any[]) ?? []
           if (!usage.length) return promoList[0]?.name
@@ -230,17 +445,45 @@ export function OwnerDashboardClient() {
       })
 
       if (trendSeriesRes?.data) {
-        setTrendData((trendSeriesRes.data as any[]).map((row: any) => ({
+        const series = (trendSeriesRes.data as any[]).map((row: any): TrendDatum => ({
           day: new Date(row.day).toLocaleDateString('es-ES', { day: '2-digit' }),
-          stamps: row.stamps_count,
-          redemptions: row.redemptions_count
-        })))
+          stamps: row.stamps_count ?? 0,
+          redemptions: row.redemptions_count ?? 0,
+        }))
+        setTrendData(series)
       } else {
         setTrendData([])
       }
 
       setCustomerAnalytics(analyticsRes?.data ?? null)
-      setCustomerSegments((segmentsRes?.data as any[]) ?? [])
+      const segments = ((segmentsRes?.data as any[]) ?? []).map((segment: any): CustomerSegment => ({
+        segment: segment.segment ?? 'Segmento',
+        customers: segment.customers ?? 0,
+        avg_stamps: segment.avg_stamps ?? undefined,
+      }))
+      setCustomerSegments(segments)
+
+      const customerRows = ((customersRes as any)?.data ?? []) as any[]
+      setCustomers(customerRows.map((row: any): CustomerSummary => ({
+        customer_id: row.customer_id,
+        customer_email: row.customer_email ?? null,
+        customer_name: row.customer_name ?? null,
+        current_stamps: row.current_stamps ?? 0,
+        total_rewards: row.total_rewards ?? 0,
+        last_stamp_at: row.last_stamp_at ?? null,
+        loyalty_card_id: row.loyalty_card_id,
+        customer_card_id: row.customer_card_id,
+        total_spent: row.total_spent ?? null,
+      })))
+
+      const eventsRows = ((eventsRes as any)?.data ?? []) as any[]
+      const normalizedEvents: BusinessEventRow[] = eventsRows.map((row: any) => ({
+        id: row.id,
+        event_type: row.event_type,
+        created_at: row.created_at,
+        metadata: normalizeEventMetadata(row.metadata),
+      }))
+      setRecentEvents(normalizedEvents)
 
       setBusiness(prev => prev ? {
         ...prev,
@@ -252,7 +495,7 @@ export function OwnerDashboardClient() {
     } finally {
       setLoading(false)
     }
-  }, [supabase, promoPage, pageSize, promoFilters, orderBy, orderDir])
+  }, [supabase, promoPage, pageSize, promoFilters, orderBy, orderDir, normalizeEventMetadata])
 
   useEffect(() => {
     loadAll()
@@ -268,6 +511,48 @@ export function OwnerDashboardClient() {
       supabase.removeChannel(channel)
     }
   }, [supabase, loadAll])
+
+  useEffect(() => {
+    if (!business?.id) return
+
+    const channel = supabase
+      .channel(`business-events:${business.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events', filter: `business_id=eq.${business.id}` }, (payload: any) => {
+        const eventRow: BusinessEventRow = {
+          id: payload.new.id,
+          event_type: payload.new.event_type,
+          created_at: payload.new.created_at,
+          metadata: normalizeEventMetadata(payload.new.metadata),
+        }
+
+        setRecentEvents((prev) => [eventRow, ...prev].slice(0, 100))
+
+        const alert = buildAlertFromEvent(eventRow)
+        if (alert) {
+          setLiveAlerts((prev) => {
+            const deduped = prev.filter((item) => item.id !== alert.id)
+            return [alert, ...deduped].slice(0, 5)
+          })
+          setTimeout(() => {
+            setLiveAlerts((prev) => prev.filter((item) => item.id !== alert.id))
+          }, 20000)
+        }
+
+        const currentCustomer = selectedCustomerRef.current
+        if (currentCustomer && eventMatchesCustomer(eventRow, currentCustomer)) {
+          setCustomerActivity((prev) => {
+            const activity = mapEventToActivity(eventRow)
+            const deduped = [activity, ...prev.filter((item) => item.id !== activity.id)]
+            return deduped.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+          })
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [supabase, business?.id, normalizeEventMetadata, buildAlertFromEvent, eventMatchesCustomer, mapEventToActivity])
 
   function handleLocalToggle(id: string, active: boolean) {
     setPromotions(prev => prev.map(p=> p.id===id ? { ...p, is_active: active } : p))
@@ -308,6 +593,75 @@ export function OwnerDashboardClient() {
     }
   }
 
+  const fetchCustomerActivity = useCallback(async (customer: CustomerSummary) => {
+    if (!business?.id) return
+    setCustomerActivity([])
+    setCustomerActivityLoading(true)
+    try {
+      const [purchasesRes, eventsResDetail] = await Promise.all([
+        supabase
+          .from('purchases')
+          .select('id,amount,currency,stamps_awarded,created_at,items')
+          .eq('business_id', business.id)
+          .eq('customer_id', customer.customer_id)
+          .order('created_at', { ascending: false })
+          .limit(25)
+          .catch(() => ({ data: [] })),
+        supabase
+          .from('events')
+          .select('id,event_type,created_at,metadata')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: false })
+          .limit(100)
+          .catch(() => ({ data: [] })),
+      ])
+
+      const purchaseRows = ((purchasesRes as any)?.data ?? []) as any[]
+      const purchaseActivities: CustomerActivityEntry[] = purchaseRows.map((row: any) => ({
+        id: row.id,
+        occurredAt: row.created_at,
+        label: 'Compra registrada',
+        type: 'purchase' as const,
+        amount: typeof row.amount === 'number' ? row.amount : undefined,
+        currency: typeof row.currency === 'string' ? row.currency : undefined,
+        stamps: typeof row.stamps_awarded === 'number' ? row.stamps_awarded : undefined,
+        description: Array.isArray(row.items) && row.items.length ? `${row.items.length} artículos` : undefined,
+        metadata: row,
+      }))
+
+      const eventsRowsDetail = ((eventsResDetail as any)?.data ?? []) as any[]
+      const normalizedEventRows: BusinessEventRow[] = eventsRowsDetail.map((row: any) => ({
+        id: row.id,
+        event_type: row.event_type,
+        created_at: row.created_at,
+        metadata: normalizeEventMetadata(row.metadata),
+      }))
+
+      const relevantEvents = normalizedEventRows.filter((event) => eventMatchesCustomer(event, customer))
+      const eventActivities = relevantEvents.map(mapEventToActivity)
+
+      const timeline = [...purchaseActivities, ...eventActivities].sort((a, b) => (
+        new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()
+      ))
+      setCustomerActivity(timeline)
+    } catch (error) {
+      console.error('Error cargando detalle de cliente', error)
+      toast.error('No se pudo cargar el detalle del cliente')
+    } finally {
+      setCustomerActivityLoading(false)
+    }
+  }, [business?.id, supabase, normalizeEventMetadata, eventMatchesCustomer, mapEventToActivity])
+
+  const handleSelectCustomer = useCallback((customer: CustomerSummary) => {
+    setSelectedCustomer(customer)
+    fetchCustomerActivity(customer)
+  }, [fetchCustomerActivity])
+
+  const handleCloseCustomerDrawer = useCallback(() => {
+    setSelectedCustomer(null)
+    setCustomerActivity([])
+  }, [])
+
   function handleAppearanceUpdate(update: {
     logo_url?: string
     primary_color?: string
@@ -340,7 +694,9 @@ export function OwnerDashboardClient() {
           promotions.forEach(p=> { nameMap[p.id]=p.name })
           setPromoUsage(usage.map((u:any)=> ({ ...u, name: nameMap[u.promotion_id] || u.promotion_id })))
         }
-      } catch { /* silent */ }
+      } catch (error) {
+        console.debug('No se pudo actualizar el uso de promociones en vivo', error)
+      }
     }, 60000)
     return () => clearInterval(interval)
   }, [business, promotions, supabase])
@@ -362,6 +718,7 @@ export function OwnerDashboardClient() {
                 <h1 className="text-2xl font-bold text-gray-900">{business.name}</h1>
                 <p className="text-sm text-gray-600">Panel de administración</p>
               </div>
+
             </div>
 
             {/* Métricas rápidas en el header */}
@@ -384,6 +741,11 @@ export function OwnerDashboardClient() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <RealtimeAlerts
+          alerts={liveAlerts}
+          onDismiss={(id) => setLiveAlerts((prev) => prev.filter((alert) => alert.id !== id))}
+        />
+
         {/* Navegación por pestañas */}
         <div className="mb-8">
           <nav className="flex space-x-8" aria-label="Tabs">
@@ -406,121 +768,22 @@ export function OwnerDashboardClient() {
 
         {/* Contenido de las pestañas */}
         {activeTab === 'overview' && (
-          <div className="space-y-8">
-            {/* Métricas principales */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <span className="text-blue-600">🏷️</span>
-                    </div>
-                  </div>
-                  <div className="ml-4">
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Clientes</dt>
-                    <dd className="text-2xl font-semibold text-gray-900">{business.total_customers ?? 0}</dd>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                      <span className="text-green-600">🎯</span>
-                    </div>
-                  </div>
-                  <div className="ml-4">
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Sellos</dt>
-                    <dd className="text-2xl font-semibold text-gray-900">{business.total_stamps ?? 0}</dd>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                      <span className="text-purple-600">🏆</span>
-                    </div>
-                  </div>
-                  <div className="ml-4">
-                    <dt className="text-sm font-medium text-gray-500 truncate">Recompensas Otorgadas</dt>
-                    <dd className="text-2xl font-semibold text-gray-900">{business.total_rewards ?? 0}</dd>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
-                      <span className="text-orange-600">🎉</span>
-                    </div>
-                  </div>
-                  <div className="ml-4">
-                    <dt className="text-sm font-medium text-gray-500 truncate">Promociones Activas</dt>
-                    <dd className="text-2xl font-semibold text-gray-900">{business.active_promotions ?? 0}</dd>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Herramientas rápidas */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <BusinessJoinQR businessId={business.id} businessName={business.name} />
-              <UniversalScanner businessId={business.id} />
-              <RedeemWalletPass businessId={business.id} />
-            </div>
-
-            {/* Gráficos */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Uso de Promociones</h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={promoUsage.slice(0, 8)}>
-                      <XAxis dataKey="name" hide={promoUsage.length > 8} />
-                      <YAxis allowDecimals={false} width={30} />
-                      <Tooltip />
-                      <Bar dataKey="usage_count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Tendencia Sellos vs Canjes (14 días)</h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={trendData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                      <XAxis dataKey="day" />
-                      <YAxis allowDecimals={false} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="stamps" stroke="#10b981" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="redemptions" stroke="#ef4444" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-
-            {/* Actividad reciente */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900">Actividad Reciente</h3>
-              </div>
-              <div className="p-6">
-                <EventsFeedClient businessId={business.id} initial={[]} />
-              </div>
-            </div>
-          </div>
+          <OverviewSection
+            business={business}
+            metrics={metrics}
+            promoUsage={promoUsage}
+            trendData={trendData}
+            customerAnalytics={customerAnalytics}
+            customerSegments={customerSegments}
+            businessId={business.id}
+            events={recentEvents}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
         )}
 
         {activeTab === 'promotions' && (
           <div className="space-y-8">
-            <PromotionForm businessId={business.id} />
+            <CampaignWizard businessId={business.id} />
 
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="p-6 border-b border-gray-200">
@@ -530,20 +793,68 @@ export function OwnerDashboardClient() {
               <div className="p-6">
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-2 text-xs items-center">
-                    <input placeholder="Buscar" className="border px-2 py-1 rounded" value={promoFilters.search||''} onChange={e=> setPromoFilters(f=> ({ ...f, search: e.target.value||undefined }))} />
-                    <select className="border px-2 py-1 rounded" value={promoFilters.status||''} onChange={e=> setPromoFilters(f=> ({ ...f, status: e.target.value||undefined }))}>
+                    <input
+                      placeholder="Buscar"
+                      className="border px-2 py-1 rounded"
+                      value={promoFilters.search || ''}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setPromoFilters((f) => ({ ...f, search: value || undefined }))
+                        setPromoPage(1)
+                      }}
+                    />
+                    <select
+                      className="border px-2 py-1 rounded"
+                      value={promoFilters.status || ''}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setPromoFilters((f) => ({ ...f, status: value || undefined }))
+                        setPromoPage(1)
+                      }}
+                    >
                       <option value="">Estado</option>
                       <option value="active">Activas</option>
                       <option value="inactive">Inactivas</option>
                       <option value="upcoming">Próximas</option>
                       <option value="expired">Expiradas</option>
                     </select>
-                    <select className="border px-2 py-1 rounded" value={promoFilters.type||''} onChange={e=> setPromoFilters(f=> ({ ...f, type: e.target.value||undefined }))}>
+                    <select
+                      className="border px-2 py-1 rounded"
+                      value={promoFilters.type || ''}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setPromoFilters((f) => ({ ...f, type: value || undefined }))
+                        setPromoPage(1)
+                      }}
+                    >
                       <option value="">Tipo</option>
                       <option value="extra_stamp">Extra</option>
                       <option value="multiplier">Multiplicador</option>
                       <option value="reward_boost">Reward Boost</option>
                     </select>
+                    <select
+                      className="border px-2 py-1 rounded"
+                      value={orderBy}
+                      onChange={(e) => {
+                        const value = e.target.value as 'created_at' | 'priority' | 'ends_at'
+                        setOrderBy(value)
+                        setPromoPage(1)
+                      }}
+                    >
+                      <option value="created_at">Fecha de creación</option>
+                      <option value="priority">Prioridad</option>
+                      <option value="ends_at">Fecha de fin</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"
+                      onClick={() => {
+                        setOrderDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                        setPromoPage(1)
+                      }}
+                    >
+                      {orderDir === 'asc' ? 'Asc ↑' : 'Desc ↓'}
+                    </button>
                     <button className="ml-auto text-xs underline" onClick={()=> { setPromoFilters({}); setPromoPage(1) }}>Reset</button>
                   </div>
                   <div className="border rounded p-3 divide-y">
@@ -572,7 +883,10 @@ export function OwnerDashboardClient() {
                                 {p.ends_at && new Date(p.ends_at) < new Date() && <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded">Expirada</span>}
                                 {p.ends_at && new Date(p.ends_at) > new Date() && !p.is_active && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Pausada</span>}
                               </div>
-                              <div className="text-xs text-gray-500">Tipo: {p.promo_type} • Creada: {new Date(p.created_at).toLocaleDateString()} {p.ends_at && `• Fin: ${new Date(p.ends_at).toLocaleDateString()}`}</div>
+                              <div className="text-xs text-gray-500">
+                                Tipo: {p.promo_type} • Creada: {new Date(p.created_at).toLocaleDateString()} {p.ends_at && `• Fin: ${new Date(p.ends_at).toLocaleDateString()} `}
+                                • Prioridad: {p.priority ?? '—'}
+                              </div>
                             </>
                           )}
                         </div>
@@ -604,6 +918,102 @@ export function OwnerDashboardClient() {
 
         {activeTab === 'customers' && (
           <div className="space-y-8">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div className="p-6 border-b border-gray-200 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Clientes</h3>
+                  <p className="text-sm text-gray-600 mt-1">Selecciona un cliente para ver su historial detallado.</p>
+                </div>
+                <span className="text-xs text-gray-500">{filteredCustomers.length} de {customers.length}</span>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <input
+                    placeholder="Buscar por nombre o email"
+                    className="border px-3 py-2 rounded"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                  />
+                  <select
+                    className="border px-3 py-2 rounded"
+                    value={customerSegmentFilter}
+                    onChange={(e) => setCustomerSegmentFilter(e.target.value as typeof customerSegmentFilter)}
+                  >
+                    <option value="all">Todos</option>
+                    <option value="loyal">Leales (≥8 sellos)</option>
+                    <option value="at-risk">En riesgo (≥30 días sin visita)</option>
+                    <option value="new">Nuevos (últimos 14 días)</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded border px-3 py-2 text-xs"
+                    onClick={() => {
+                      setCustomerSearch('')
+                      setCustomerSegmentFilter('all')
+                    }}
+                  >
+                    Limpiar filtros
+                  </button>
+                </div>
+
+                <div className="overflow-hidden rounded-lg border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-200 text-xs">
+                    <thead className="bg-gray-50">
+                      <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500">
+                        <th className="px-4 py-3 font-semibold">Cliente</th>
+                        <th className="px-4 py-3 font-semibold text-right">Sellos</th>
+                        <th className="px-4 py-3 font-semibold text-right">Recompensas</th>
+                        <th className="px-4 py-3 font-semibold text-right">Última visita</th>
+                        <th className="px-4 py-3 font-semibold text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredCustomers.map((customer) => {
+                        const displayName = customer.customer_name || customer.customer_email || 'Cliente sin nombre'
+                        const email = customer.customer_email || '—'
+                        return (
+                          <tr
+                            key={customer.customer_id}
+                            className="cursor-pointer bg-white transition hover:bg-blue-50/60"
+                            onClick={() => handleSelectCustomer(customer)}
+                          >
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-gray-900">{displayName}</div>
+                              <div className="text-[11px] text-gray-500">{email}</div>
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-gray-900">{customer.current_stamps}</td>
+                            <td className="px-4 py-3 text-right text-gray-700">{customer.total_rewards}</td>
+                            <td className="px-4 py-3 text-right text-gray-700">{formatLastActivity(customer.last_stamp_at)}</td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleSelectCustomer(customer)
+                                }}
+                              >
+                                Ver detalle
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {filteredCustomers.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-500">
+                            {customers.length === 0
+                              ? 'Aún no hay clientes registrados.'
+                              : 'No encontramos clientes con los filtros seleccionados.'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="p-6 border-b border-gray-200">
                 <h3 className="text-lg font-semibold text-gray-900">Analytics de Clientes</h3>
@@ -639,7 +1049,7 @@ export function OwnerDashboardClient() {
               <div className="p-6">
                 {customerSegments.length > 0 ? (
                   <div className="space-y-4">
-                    {customerSegments.map((segment: any, index: number) => (
+                    {customerSegments.map((segment, index) => (
                       <div key={index} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
                         <div>
                           <div className="font-medium">{segment.segment}</div>
@@ -685,79 +1095,13 @@ export function OwnerDashboardClient() {
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="grid gap-1 text-right">
-      <span className="text-[11px] uppercase tracking-wide text-gray-500">{label}</span>
-      <span className="font-semibold text-sm">{value}</span>
-    </div>
-  )
-}
-
-function RewardsAnalytics({ businessId }: { businessId: string }) {
-  const supabase = getSupabaseClient()
-  const [loading, setLoading] = useState(true)
-  const [series, setSeries] = useState<any[]>([])
-  const [conversion, setConversion] = useState<any|null>(null)
-  const [days, setDays] = useState(30)
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      try {
-        const { data: ts } = await supabase.rpc('get_rewards_timeseries', { p_business_id: businessId, p_days: days } as any)
-        if (!cancelled && ts) {
-          setSeries(ts.map((r:any)=> ({ day: new Date(r.day).toLocaleDateString('es-ES',{ day:'2-digit'}), rewards: r.rewards_count })))
-        }
-      } catch {}
-      try {
-        const { data: conv } = await supabase.rpc('get_reward_conversion', { p_business_id: businessId, p_days: days } as any)
-        if (!cancelled && conv) setConversion(conv)
-      } catch {}
-      if (!cancelled) setLoading(false)
-    }
-    load()
-    return () => { cancelled = true }
-  }, [businessId, supabase, days])
-  return (
-    <div className="border rounded p-3 space-y-4">
-      <div className="flex items-center gap-3">
-        <h4 className="font-semibold text-sm">Recompensas ({days}d)</h4>
-        <select className="text-xs border rounded px-1 py-0.5" value={days} onChange={e=> setDays(parseInt(e.target.value,10))}>
-          <option value={7}>7d</option>
-          <option value={30}>30d</option>
-          <option value={60}>60d</option>
-        </select>
-      </div>
-      {loading && <div className="text-xs text-gray-500">Cargando...</div>}
-      {!loading && (
-        <div className="grid md:grid-cols-2 gap-6">
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                <XAxis dataKey="day" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="rewards" stroke="#6366f1" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="text-xs space-y-2">
-            {conversion ? (
-              <ul className="space-y-1">
-                <li>Sellos: {conversion.stamps}</li>
-                <li>Recompensas: {conversion.rewards}</li>
-                <li>Ratio (rewards / sellos %): {conversion.ratio}</li>
-              </ul>
-            ) : <div className="text-gray-500">Sin datos</div>}
-          </div>
-        </div>
-      )}
+      <CustomerDetailDrawer
+        open={Boolean(selectedCustomer)}
+        customer={selectedCustomer}
+        activity={customerActivity}
+        loading={customerActivityLoading}
+        onClose={handleCloseCustomerDrawer}
+      />
     </div>
   )
 }

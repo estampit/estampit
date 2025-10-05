@@ -23,12 +23,14 @@
     "supabase:types": "cd backend/supabase && supabase gen types typescript --linked > remote_types.d.ts",
     "supabase:reset": "cd backend/supabase && supabase db reset --linked --no-seed --yes",
     "supabase:migrations": "cd backend/supabase && supabase migration list",
-    "verify:remote": "node scripts/verifyRemote.js"
+    "verify:remote": "node scripts/verifyRemote.js",
+    "pass-assets:check": "node scripts/check-pass-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.8.0",
     "dotenv": "^16.4.5",
     "eslint": "^8.50.0",
+    "passkit-generator": "^3.0.5",
     "prettier": "^3.0.3",
     "turbo": "^2.5.8",
     "typescript": "^5.9.3"

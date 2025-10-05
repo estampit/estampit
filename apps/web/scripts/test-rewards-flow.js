@@ -5,7 +5,7 @@
  * Uso: node scripts/test-rewards-flow.js
  */
 
-const fetch = require('node-fetch')
+const fetch = globalThis.fetch || ((...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args)))
 
 const BASE_URL = 'http://localhost:3001'
 

@@ -2,12 +2,17 @@
 import Link from 'next/link'
 import { useAuth } from '@/app/context/AuthContext'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 
 export function AppTopBar() {
   const { user, loading } = useAuth()
   const supabase = createClient()
   const router = useRouter()
+  const pathname = usePathname()
+
+  if (pathname === '/' || pathname?.startsWith('/demo')) {
+    return null
+  }
 
   const handleLogout = async () => {
     console.log('🚪 Cerrando sesión...')

@@ -2,11 +2,17 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/app/context/AuthContext'
 import { createClient } from '@/lib/supabase/client'
+import { usePathname } from 'next/navigation'
 
 export function AuthDebugger() {
   const { user } = useAuth()
   const [businesses, setBusinesses] = useState<any>(null)
   const [bizError, setBizError] = useState<string | null>(null)
+  const pathname = usePathname()
+
+  if (pathname === '/' || pathname?.startsWith('/demo')) {
+    return null
+  }
 
   useEffect(() => {
     async function loadBusinesses() {

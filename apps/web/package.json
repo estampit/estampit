@@ -6,7 +6,7 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+  "lint": "eslint --ext .ts,.tsx \"app/(marketing)\" app/page.tsx app/components/OwnerDashboardClient.tsx app/components/dashboard/owner",
     "type-check": "tsc --noEmit",
     "generate:types": "bash ../../backend/supabase/scripts/gen-types.sh"
   },
@@ -32,15 +32,20 @@
     "recharts": "^2.8.0",
     "swr": "^2.3.6",
     "tailwind-merge": "^1.14.0",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "passkit-generator": "^3.0.5"
   },
   "devDependencies": {
     "@types/node": "^20.19.19",
     "@types/react": "^18.2.79",
     "@types/react-dom": "^18.2.11",
+    "@typescript-eslint/eslint-plugin": "^8.8.0",
+    "@typescript-eslint/parser": "^8.8.0",
     "autoprefixer": "^10.4.16",
-    "eslint": "^8.50.0",
-    "eslint-config-next": "14.0.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-jsx-a11y": "^6.9.0",
+    "eslint-plugin-react": "^7.37.1",
+    "eslint-plugin-react-hooks": "^4.6.2",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.4.18",
     "typescript": "^5.9.3"
