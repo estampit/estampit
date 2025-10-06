@@ -495,8 +495,13 @@ export function QuickJoinForm({
       })
 
   const envOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim()
-  const baseSiteUrl = envOrigin && envOrigin.length > 0 ? envOrigin.replace(/\/$/, '') : window.location.origin
-  const redirectTo = `${baseSiteUrl}/auth/callback?next=/join/${businessId}`
+  const runtimeOrigin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : undefined
+  const baseSiteUrl = (runtimeOrigin ?? envOrigin ?? '').replace(/\/$/, '')
+  const nextPath = `/join/${businessId}/${promotion.id}`
+  const redirectTo = `${baseSiteUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`
       
       if (process.env.NODE_ENV === 'development') {
         console.log('🚀 Iniciando OAuth flow...')
