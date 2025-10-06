@@ -540,7 +540,7 @@ async function tryGenerateSignedPass(builtPass: BuiltWalletPass) {
       signerKeyPassphrase
     }
 
-    const assetMap = buildPassAssetMap(builtPass.assets)
+    const assetMap = buildPassAssetMap(builtPass.assets, builtPass.pass)
     const passInstance = new PKPass(cloneTemplate(builtPass.pass), certificates, assetMap)
 
     const buffer = await passInstance.getAsBuffer()
@@ -625,13 +625,14 @@ async function buildDefaultAssetBundle(): Promise<PassAssetBundle> {
   }
 }
 
-function buildPassAssetMap(bundle: PassAssetBundle): Record<string, Buffer> {
+function buildPassAssetMap(bundle: PassAssetBundle, pass: Record<string, any>): Record<string, Buffer> {
   const toBuffer = (value: string) => {
     const trimmed = (value || '').trim()
     return Buffer.from(trimmed, 'base64')
   }
 
   return {
+    'pass.json': Buffer.from(JSON.stringify(cloneTemplate(pass)), 'utf8'),
     'icon.png': toBuffer(bundle.icon),
     'icon@2x.png': toBuffer(bundle.icon2x),
     'logo.png': toBuffer(bundle.logo),
