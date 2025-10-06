@@ -16,7 +16,7 @@ if (!storeCode) {
 }
 
 // URL de alta (cambiar por tu ngrok URL en producción)
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
+const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
 const enrollUrl = `${baseUrl}/enroll?s=${storeCode}`
 
 console.log(`Generando QR para tienda: ${storeCode}`)

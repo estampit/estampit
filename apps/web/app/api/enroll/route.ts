@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     // Create or find customer
     let customer
-    const { data: existingCustomer, error: customerError } = await supabase
+    const { data: existingCustomer, error: _customerError } = await supabase
       .from('customers')
       .select('*')
       .eq('email', email)
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate URLs
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
     const passUrl = `${baseUrl}/api/pass/${customer.id}.pkpass?store=${store.id}`
     const verifyUrl = `${baseUrl}/api/verify?token=${userToken}`
 

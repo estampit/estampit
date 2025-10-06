@@ -11,7 +11,7 @@ export async function POST(
     return NextResponse.json({ success: false, error: 'token_required' }, { status: 400 })
   }
 
-  const siteUrl = request.headers.get('origin') || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
+  const siteUrl = request.headers.get('origin') || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL) || 'http://localhost:3001'
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 

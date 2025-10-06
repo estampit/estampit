@@ -69,12 +69,12 @@ export async function POST(
     }
   })
 
-  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || request.headers.get('origin') || 'http://localhost:3001').replace(/\/$/, '')
+  const siteUrl = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL || request.headers.get('origin') || 'http://localhost:3001').replace(/\/$/, '')
 
   let payload: any
   try {
     payload = await request.json()
-  } catch (e) {
+  } catch {
     return NextResponse.json({ success: false, error: 'invalid_json' }, { status: 400 })
   }
 

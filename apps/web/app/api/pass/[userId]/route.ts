@@ -68,7 +68,7 @@ export async function GET(
     // For development, return JSON instead of .pkpass
     // In production, use passkit-generator to create actual .pkpass
 
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'
     const verifyUrl = `${baseUrl}/api/verify?token=token_${userId}_${storeId}_${Date.now()}`
 
     const passData = {
