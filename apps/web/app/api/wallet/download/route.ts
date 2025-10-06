@@ -332,7 +332,7 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     }
   ]
 
-  pass.type = 'generic'
+  pass.model = 'generic'
 
   const backFields = [
     {
@@ -540,20 +540,39 @@ async function tryGenerateSignedPass(builtPass: BuiltWalletPass) {
       signerKeyPassphrase
     }
 
-    const assetMap = buildPassAssetMap(builtPass.assets, builtPass.pass)
-    const passInstance = new PKPass(cloneTemplate(builtPass.pass), certificates, assetMap)
+    // Create temporary directory for pass assets
+    const tempDir = path.join('/tmp', `pass-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`)
+    await fsp.mkdir(tempDir, { recursive: true })
 
-    const buffer = await passInstance.getAsBuffer()
-    const filename = `${builtPass.pass.serialNumber || 'wallet-pass'}.pkpass`
-
-    const body = new Uint8Array(buffer)
-
-    return new NextResponse(body, {
-      headers: {
-        'Content-Type': 'application/vnd.apple.pkpass',
-        'Content-Disposition': `attachment; filename="${filename}"`
+    try {
+      const assetMap = buildPassAssetMap(builtPass.assets, builtPass.pass)
+      
+      // Write all assets to temp directory
+      for (const [filename, buffer] of Object.entries(assetMap)) {
+        await fsp.writeFile(path.join(tempDir, filename), buffer)
       }
-    })
+
+      const passInstance = new PKPass(tempDir, certificates)
+
+      const buffer = await passInstance.getAsBuffer()
+      const filename = `${builtPass.pass.serialNumber || 'wallet-pass'}.pkpass`
+
+      const body = new Uint8Array(buffer)
+
+      return new NextResponse(body, {
+        headers: {
+          'Content-Type': 'application/vnd.apple.pkpass',
+          'Content-Disposition': `attachment; filename="${filename}"`
+        }
+      })
+    } finally {
+      // Clean up temp directory
+      try {
+        await fsp.rm(tempDir, { recursive: true, force: true })
+      } catch (cleanupError) {
+        console.warn('[wallet/download] Failed to clean up temp directory:', cleanupError)
+      }
+    }
   } catch (error) {
     console.warn('[wallet/download] No se pudo firmar el pass automáticamente. Detalle:', error)
     return null
