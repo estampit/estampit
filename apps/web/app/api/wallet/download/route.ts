@@ -543,10 +543,7 @@ async function tryGenerateSignedPass(builtPass: BuiltWalletPass) {
     const passTemplate = cloneTemplate(builtPass.pass)
     const assetMap = buildPassAssetMap(builtPass.assets, passTemplate)
 
-    const passInstance = await PKPass.from({
-      model: assetMap,
-      certificates
-    })
+    const passInstance = new PKPass(assetMap, certificates)
 
     const buffer = await passInstance.getAsBuffer()
     const filename = `${passTemplate.serialNumber || 'wallet-pass'}.pkpass`
