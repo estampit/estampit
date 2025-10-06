@@ -332,6 +332,8 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     }
   ]
 
+  pass.type = 'generic'
+
   const backFields = [
     {
       key: 'instructions',
