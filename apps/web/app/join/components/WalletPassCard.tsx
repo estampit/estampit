@@ -175,11 +175,14 @@ export function WalletPassCard({
           {downloadUrl && (
             <a
               href={downloadUrl}
-              className="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition"
+              className="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition gap-2"
               rel="noopener noreferrer"
               target="_blank"
             >
-              Añadir a mi Wallet
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M18.71 7.21a.999.999 0 0 0-1.42 0l-1.18 1.18c-.18.18-.29.43-.29.71 0 .28.11.53.29.71l1.18 1.18c.39.39 1.03.39 1.42 0 .39-.39.39-1.03 0-1.42L18.71 7.21zM14.47 9.53l-1.18-1.18c-.39-.39-1.03-.39-1.42 0-.39.39-.39 1.03 0 1.42l1.18 1.18c.18.18.43.29.71.29.28 0 .53-.11.71-.29.39-.39.39-1.03 0-1.42zM12 4c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7z"/>
+              </svg>
+              Añadir a Apple Wallet
             </a>
           )}
         </div>

@@ -410,6 +410,36 @@ export function QuickJoinForm({
 
       setResult(json.data)
       router.prefetch(`/join/${businessId}`)
+
+      // Generar pase de Apple Wallet si es iOS
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      if (isIOS && json.data.walletPass?.qr_token) {
+        try {
+          const supabase = getSupabaseClient()
+          const applePassResponse = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-apple-pass`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${supabase.supabaseKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              userId: json.data.userId,
+              qrCode: json.data.walletPass.qr_token,
+              businessName: json.data.business.name,
+              reward: json.data.loyaltyCard.reward_description || 'Recompensa',
+            }),
+          })
+          if (applePassResponse.ok) {
+            const blob = await applePassResponse.blob()
+            const applePassUrl = URL.createObjectURL(blob)
+            // Actualizar result con el nuevo downloadUrl
+            setResult(prev => prev ? { ...prev, downloadUrl: applePassUrl } : prev)
+          }
+        } catch (appleError) {
+          console.warn('Error generando pase de Apple:', appleError)
+        }
+      }
+
       return true
     } catch (err: any) {
       console.error('Join request failed', err)
