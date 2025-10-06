@@ -546,8 +546,20 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
 
 async function resolvePassResources() {
   const rootOverride = process.env.PASS_ASSETS_DIR
-  const defaultRoot = path.join(process.cwd(), 'public', 'pass-assets')
-  const assetsRoot = rootOverride ? path.resolve(process.cwd(), rootOverride) : defaultRoot
+  const candidateRoots = rootOverride
+    ? [path.resolve(process.cwd(), rootOverride)]
+    : [
+        path.join(process.cwd(), 'apps', 'web', 'public', 'pass-assets'),
+        path.join(process.cwd(), 'public', 'pass-assets')
+      ]
+
+  const assetsRoot = await findFirstExisting(candidateRoots)
+
+  if (!assetsRoot) {
+    throw new Error(
+      `No se encontró directorio base de pass-assets. Revisados: ${candidateRoots.join(', ')}`
+    )
+  }
 
   const modelDir = resolvePath(process.env.PASS_MODEL_DIR, path.join(assetsRoot, 'model'))
   const wwdrPath = resolvePath(process.env.PASS_WWDR_CERT, path.join(assetsRoot, 'wwdr.pem'))
@@ -585,6 +597,21 @@ function resolvePath(envValue: string | undefined, defaultPath: string) {
     return path.resolve(process.cwd(), envValue)
   }
   return defaultPath
+}
+
+async function findFirstExisting(paths: string[]): Promise<string | null> {
+  for (const candidate of paths) {
+    try {
+      const stats = await fsp.stat(candidate)
+      if (stats.isDirectory()) {
+        return candidate
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return null
 }
 
 async function ensureExists(filePath: string, label: string) {
