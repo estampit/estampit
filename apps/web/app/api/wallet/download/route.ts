@@ -2,6 +2,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabaseServer'
+import { createClient } from '@supabase/supabase-js'
+import type { Database } from '@/types/database.types'
 import path from 'node:path'
 import { promises as fsp } from 'node:fs'
 import { Buffer } from 'node:buffer'
@@ -112,7 +114,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = await getServerSupabase()
+    const supabase = createAdminSupabaseClient() ?? await getServerSupabase()
 
     // Verificar que el token existe y obtener datos completos con joins
     const { data: passData, error } = await supabase
@@ -194,6 +196,22 @@ export async function GET(request: NextRequest) {
     console.error('Error generando wallet pass:', error)
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
   }
+}
+
+function createAdminSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceRoleKey) {
+    return null
+  }
+
+  return createClient<Database>(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  })
 }
 
 async function buildPassPayload(data: WalletPassWithDetails, token: string): Promise<BuiltWalletPass> {
