@@ -494,7 +494,9 @@ export function QuickJoinForm({
         timestamp: Date.now()
       })
 
-      const redirectTo = `${window.location.origin}/auth/callback?next=/join/${businessId}`
+  const envOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+  const baseSiteUrl = envOrigin && envOrigin.length > 0 ? envOrigin.replace(/\/$/, '') : window.location.origin
+  const redirectTo = `${baseSiteUrl}/auth/callback?next=/join/${businessId}`
       
       if (process.env.NODE_ENV === 'development') {
         console.log('🚀 Iniciando OAuth flow...')
