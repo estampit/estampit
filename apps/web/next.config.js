@@ -10,6 +10,11 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  experimental: {
+    outputFileTracingIncludes: {
+      '/app/api/wallet/download': ['./public/pass-assets/**'],
+    },
+  },
 }
 
 module.exports = nextConfig
