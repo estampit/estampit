@@ -79,18 +79,13 @@ type WalletPassWithDetails = {
     loyalty_cards: {
       id: string
       name: string | null
+      description: string | null
       reward_description: string | null
       stamps_required: number | null
       businesses: {
         id: string
         name: string
         logo_url: string | null
-        primary_color: string | null
-        secondary_color: string | null
-        background_color: string | null
-        text_color: string | null
-        card_title?: string | null
-        card_description?: string | null
         settings: Record<string, any> | null
       }
     }
@@ -133,16 +128,13 @@ export async function GET(request: NextRequest) {
           loyalty_cards!inner (
             id,
             name,
+            description,
             reward_description,
             stamps_required,
             businesses!inner (
               id,
               name,
               logo_url,
-              primary_color,
-              secondary_color,
-              background_color,
-              text_color,
               settings
             )
           )
@@ -229,13 +221,20 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
 
   const promotion = data.promotions
 
-  const businessSettings = (business.settings ?? {}) as Record<string, any>
-  const pickText = (...values: Array<string | null | undefined>) => {
+  const businessSettings = ensureSettingsObject(business.settings)
+  const pickSetting = createSettingsAccessor(businessSettings)
+  const pickText = (...values: Array<string | number | null | undefined>) => {
     for (const value of values) {
       if (typeof value === 'string') {
         const trimmed = value.trim()
         if (trimmed.length > 0) {
           return trimmed
+        }
+      }
+      if (typeof value === 'number') {
+        const maybeNumber = `${value}`.trim()
+        if (maybeNumber.length > 0) {
+          return maybeNumber
         }
       }
     }
@@ -246,29 +245,41 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
   const teamIdentifier = process.env.APPLE_TEAM_ID || 'TEAM_PLACEHOLDER'
   const organizationName = business.name || process.env.APPLE_ORGANIZATION_NAME || 'Stampit'
 
-  const resolvedCardDescription = pickText(
-    business.card_description,
-    businessSettings.card_description,
-    businessSettings.cardDescription
-  )
+  const cardTitleSetting = pickSetting('card_title', 'cardTitle', 'display.card_title', 'display.cardTitle', 'appearance.card_title', 'appearance.cardTitle', 'branding.cardTitle')
+  const cardDescriptionSetting = pickSetting('card_description', 'cardDescription', 'display.card_description', 'display.cardDescription', 'appearance.card_description', 'appearance.cardDescription', 'details.description')
+  const logoTextSetting = pickSetting('logo_text', 'logoText', 'appearance.logo_text', 'appearance.logoText', 'branding.logoText')
+  const backgroundSetting = pickSetting('background_color', 'backgroundColor', 'appearance.background_color', 'appearance.backgroundColor', 'appearance.background', 'colors.background', 'appearance.colors.background')
+  const primarySetting = pickSetting('primary_color', 'primaryColor', 'appearance.primary_color', 'appearance.primaryColor', 'colors.primary')
+  const secondarySetting = pickSetting('secondary_color', 'secondaryColor', 'appearance.secondary_color', 'appearance.secondaryColor', 'colors.secondary')
+  const textSetting = pickSetting('text_color', 'textColor', 'appearance.text_color', 'appearance.textColor', 'appearance.foreground', 'appearance.foregroundColor', 'colors.text', 'colors.foreground')
+  const accentSetting = pickSetting('accent_color', 'accentColor', 'appearance.accent_color', 'appearance.accentColor', 'colors.accent', 'colors.highlight')
+
   const resolvedPromotionDescription = pickText(promotion?.description)
+  const resolvedCardDescription = pickText(
+    cardDescriptionSetting,
+    loyaltyCard.description,
+    resolvedPromotionDescription
+  )
   const description = pickText(
     resolvedCardDescription,
-    resolvedPromotionDescription,
     DEFAULT_PASS_TEMPLATE.description,
     'Tarjeta de fidelización'
   ) || 'Tarjeta de fidelización'
 
   const resolvedCardTitle = pickText(
-    business.card_title,
-    businessSettings.card_title,
-    businessSettings.cardTitle
+    cardTitleSetting,
+    loyaltyCard.name,
+    business.name
   )
-  const logoText = resolvedCardTitle ?? organizationName
+  const logoText = pickText(logoTextSetting, resolvedCardTitle, organizationName) || organizationName
 
-  const backgroundColor = toPassColor(business.background_color, DEFAULT_PASS_TEMPLATE.backgroundColor)
-  const foregroundColor = toPassColor(business.text_color, DEFAULT_PASS_TEMPLATE.foregroundColor)
-  const labelColor = toPassColor(business.secondary_color ?? business.primary_color, DEFAULT_PASS_TEMPLATE.labelColor || foregroundColor)
+  const rawBackground = pickText(backgroundSetting, primarySetting)
+  const rawForeground = pickText(textSetting, accentSetting, primarySetting)
+  const rawLabel = pickText(accentSetting, secondarySetting, primarySetting, rawForeground)
+
+  const backgroundColor = toPassColor(rawBackground, DEFAULT_PASS_TEMPLATE.backgroundColor)
+  const foregroundColor = toPassColor(rawForeground, DEFAULT_PASS_TEMPLATE.foregroundColor)
+  const labelColor = toPassColor(rawLabel, DEFAULT_PASS_TEMPLATE.labelColor || foregroundColor)
 
   const currentStamps = Math.max(0, Math.floor(data.customer_cards.current_stamps ?? 0))
   const stampsRequired = Math.max(0, Math.floor(loyaltyCard.stamps_required ?? 0))
@@ -401,6 +412,89 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
       promotionId: data.promotion_id ?? null
     }
   }
+}
+
+function ensureSettingsObject(candidate: unknown): Record<string, any> {
+  if (isPlainObject(candidate)) {
+    return candidate as Record<string, any>
+  }
+  return {}
+}
+
+function createSettingsAccessor(settings: Record<string, any>) {
+  return (...paths: string[]) => {
+    for (const path of paths) {
+      if (!path) continue
+      const value = resolveSettingPath(settings, path)
+      if (value === null || value === undefined) {
+        continue
+      }
+      if (typeof value === 'string') {
+        const trimmed = value.trim()
+        if (trimmed.length > 0) {
+          return trimmed
+        }
+      } else if (typeof value === 'number' || typeof value === 'boolean') {
+        const text = String(value).trim()
+        if (text.length > 0) {
+          return text
+        }
+      }
+    }
+    return null
+  }
+}
+
+function resolveSettingPath(settings: Record<string, any>, path: string): unknown {
+  const segments = path.split('.').map((segment) => segment.trim()).filter(Boolean)
+  let current: unknown = settings
+
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      const index = Number(segment)
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return undefined
+      }
+      current = current[index]
+      continue
+    }
+
+    if (!isPlainObject(current)) {
+      return undefined
+    }
+
+    const key = resolveSettingKey(current, segment)
+    if (!key) {
+      return undefined
+    }
+
+    current = (current as Record<string, any>)[key]
+  }
+
+  return current
+}
+
+function resolveSettingKey(obj: Record<string, any>, segment: string): string | null {
+  if (Object.prototype.hasOwnProperty.call(obj, segment)) {
+    return segment
+  }
+
+  const normalizedSegment = normalizeSettingKey(segment)
+  for (const candidate of Object.keys(obj)) {
+    if (normalizeSettingKey(candidate) === normalizedSegment) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function normalizeSettingKey(key: string): string {
+  return key.replace(/[_\s-]/g, '').toLowerCase()
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 const shouldAttemptSigning = () => {
