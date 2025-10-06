@@ -69,7 +69,31 @@ export async function POST(
     }
   })
 
-  const siteUrl = (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.NEXT_PUBLIC_SITE_URL || request.headers.get('origin') || 'http://localhost:3001').replace(/\/$/, '')
+  const originHeader = request.headers.get('origin')
+  const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL
+  const forwardedProto = request.headers.get('x-forwarded-proto')
+  const hostHeader = request.headers.get('host')
+  const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null
+
+  const pickSiteUrl = () => {
+    const candidates = [
+      originHeader,
+      configuredSiteUrl,
+      hostHeader ? `${forwardedProto ?? 'https'}://${hostHeader}` : null,
+      vercelUrl,
+      'http://localhost:3001'
+    ]
+
+    for (const candidate of candidates) {
+      if (candidate && candidate.trim().length > 0) {
+        return candidate.replace(/\/$/, '')
+      }
+    }
+
+    return 'http://localhost:3001'
+  }
+
+  const siteUrl = pickSiteUrl()
 
   let payload: any
   try {
