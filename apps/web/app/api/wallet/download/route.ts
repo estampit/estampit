@@ -84,13 +84,14 @@ type WalletPassWithDetails = {
       businesses: {
         id: string
         name: string
-        card_title: string | null
-        card_description: string | null
         logo_url: string | null
         primary_color: string | null
         secondary_color: string | null
         background_color: string | null
         text_color: string | null
+        card_title?: string | null
+        card_description?: string | null
+        settings: Record<string, any> | null
       }
     }
   }
@@ -137,13 +138,12 @@ export async function GET(request: NextRequest) {
             businesses!inner (
               id,
               name,
-              card_title,
-              card_description,
               logo_url,
               primary_color,
               secondary_color,
               background_color,
-              text_color
+              text_color,
+              settings
             )
           )
         ),
@@ -229,19 +229,46 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
 
   const promotion = data.promotions
 
+  const businessSettings = (business.settings ?? {}) as Record<string, any>
+  const pickText = (...values: Array<string | null | undefined>) => {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim()
+        if (trimmed.length > 0) {
+          return trimmed
+        }
+      }
+    }
+    return null
+  }
+
   const passTypeIdentifier = process.env.APPLE_WALLET_PASS_TYPE_ID || 'pass.com.mystamp.loyalty'
   const teamIdentifier = process.env.APPLE_TEAM_ID || 'TEAM_PLACEHOLDER'
   const organizationName = business.name || process.env.APPLE_ORGANIZATION_NAME || 'Stampit'
 
-  const description = (business.card_description && business.card_description.trim())
-    || (typeof promotion?.description === 'string' && promotion.description.trim())
-    || DEFAULT_PASS_TEMPLATE.description
-    || 'Tarjeta de fidelización'
+  const resolvedCardDescription = pickText(
+    business.card_description,
+    businessSettings.card_description,
+    businessSettings.cardDescription
+  )
+  const resolvedPromotionDescription = pickText(promotion?.description)
+  const description = pickText(
+    resolvedCardDescription,
+    resolvedPromotionDescription,
+    DEFAULT_PASS_TEMPLATE.description,
+    'Tarjeta de fidelización'
+  ) || 'Tarjeta de fidelización'
+
+  const resolvedCardTitle = pickText(
+    business.card_title,
+    businessSettings.card_title,
+    businessSettings.cardTitle
+  )
+  const logoText = resolvedCardTitle ?? organizationName
 
   const backgroundColor = toPassColor(business.background_color, DEFAULT_PASS_TEMPLATE.backgroundColor)
   const foregroundColor = toPassColor(business.text_color, DEFAULT_PASS_TEMPLATE.foregroundColor)
   const labelColor = toPassColor(business.secondary_color ?? business.primary_color, DEFAULT_PASS_TEMPLATE.labelColor || foregroundColor)
-  const logoText = business.card_title?.trim() || organizationName
 
   const currentStamps = Math.max(0, Math.floor(data.customer_cards.current_stamps ?? 0))
   const stampsRequired = Math.max(0, Math.floor(loyaltyCard.stamps_required ?? 0))
@@ -298,7 +325,7 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     {
       key: 'instructions',
       label: 'Cómo usar',
-      value: business.card_description?.trim() || 'Presenta este pass para acumular sellos y canjear recompensas.'
+      value: resolvedCardDescription || 'Presenta este pass para acumular sellos y canjear recompensas.'
     },
     {
       key: 'progress',
