@@ -5,10 +5,20 @@ import { getServerSupabase } from '@/lib/supabaseServer'
 import path from 'node:path'
 import { promises as fsp } from 'node:fs'
 
+type SupabasePassPayload = {
+  userId: string | null
+  qrCode: string
+  businessName: string
+  reward: string
+  currentStamps: number
+  stampsRequired: number
+}
+
 type WalletPassWithDetails = {
   id: string
   qr_token: string
   customer_cards: {
+    customer_id: string
     current_stamps: number
     loyalty_cards: {
       stamps_required: number
@@ -37,6 +47,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         customer_cards!inner (
+          customer_id,
           current_stamps,
           loyalty_cards!inner (
             stamps_required,
@@ -61,6 +72,11 @@ export async function GET(request: NextRequest) {
     const signedResponse = await tryGenerateSignedPass(passPayload)
     if (signedResponse) {
       return signedResponse
+    }
+
+    const supabasePassResponse = await tryGenerateSupabasePass(token, passPayload, data)
+    if (supabasePassResponse) {
+      return supabasePassResponse
     }
 
     return new NextResponse(JSON.stringify(passPayload, null, 2), {
@@ -162,6 +178,53 @@ async function tryGenerateSignedPass(passPayload: Record<string, any>) {
     })
   } catch (error) {
     console.warn('[wallet/download] No se pudo firmar el pass automáticamente. Enviando JSON. Detalle:', error)
+    return null
+  }
+}
+
+async function tryGenerateSupabasePass(token: string, passPayload: Record<string, any>, data: WalletPassWithDetails) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return null
+  }
+
+  const payload: SupabasePassPayload = {
+    userId: data.customer_cards.customer_id ?? null,
+    qrCode: token,
+    businessName: data.customer_cards.loyalty_cards.businesses.name || 'Negocio',
+    reward: data.customer_cards.loyalty_cards.reward_description || 'Recompensa',
+    currentStamps: data.customer_cards.current_stamps ?? 0,
+    stampsRequired: data.customer_cards.loyalty_cards.stamps_required ?? 0
+  }
+
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/generate-apple-pass`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${supabaseServiceKey}`
+      },
+      body: JSON.stringify(payload)
+    })
+
+    if (!response.ok) {
+      console.warn('[wallet/download] Supabase pass signing failed', response.status, await response.text())
+      return null
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    const filename = `${passPayload.serialNumber || 'wallet-pass'}.pkpass`
+
+    return new NextResponse(new Uint8Array(arrayBuffer), {
+      headers: {
+        'Content-Type': 'application/vnd.apple.pkpass',
+        'Content-Disposition': `attachment; filename="${filename}"`
+      }
+    })
+  } catch (error) {
+    console.warn('[wallet/download] Error calling Supabase pass signer', error)
     return null
   }
 }
