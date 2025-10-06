@@ -10,10 +10,8 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  experimental: {
-    outputFileTracingIncludes: {
-      '/app/api/wallet/download': ['./public/pass-assets/**'],
-    },
+  outputFileTracingIncludes: {
+    '/app/api/wallet/download': ['./public/pass-assets/**'],
   },
 }
 

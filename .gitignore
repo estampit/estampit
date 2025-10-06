@@ -170,3 +170,4 @@ wallet/google-wallet/service-account.json
 # Database dumps
 *.sql
 *.dump
+.vercel
