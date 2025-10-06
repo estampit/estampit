@@ -511,32 +511,37 @@ async function tryGenerateSignedPass(builtPass: BuiltWalletPass) {
 
   try {
     const {
-      modelDir,
       wwdrPath,
+      wwdrBuffer,
       signerCertPath,
+      signerCertBuffer,
       signerKeyPath,
+      signerKeyBuffer,
       signerKeyPassphrase,
       envSignerCert,
       envSignerKey
     } = await resolvePassResources()
 
     const { PKPass } = (await import('passkit-generator')) as any
+    const wwdr = wwdrBuffer ?? (wwdrPath ? await fsp.readFile(wwdrPath) : null)
+    const signerCert = envSignerCert ?? signerCertBuffer ?? (signerCertPath ? await fsp.readFile(signerCertPath) : null)
+    const signerKey = envSignerKey ?? signerKeyBuffer ?? (signerKeyPath ? await fsp.readFile(signerKeyPath) : null)
+
+    if (!wwdr || !signerCert || !signerKey) {
+      throw new Error('Certificados de Apple Wallet no configurados correctamente')
+    }
+
     const certificates = {
-      wwdr: await fsp.readFile(wwdrPath),
-      signerCert: envSignerCert ?? await fsp.readFile(signerCertPath),
-      signerKey: envSignerKey ?? await fsp.readFile(signerKeyPath),
+      wwdr,
+      signerCert,
+      signerKey,
       signerKeyPassphrase
     }
 
-    const pass = (await PKPass.from(
-      {
-        model: modelDir,
-        certificates
-      },
-      builtPass.pass as any
-    )) as any
+    const assetMap = buildPassAssetMap(builtPass.assets)
+    const passInstance = new PKPass(cloneTemplate(builtPass.pass), certificates, assetMap)
 
-    const buffer = await streamToBuffer(pass.stream as NodeJS.ReadableStream)
+    const buffer = await passInstance.getAsBuffer()
     const filename = `${builtPass.pass.serialNumber || 'wallet-pass'}.pkpass`
 
     const body = new Uint8Array(buffer)
@@ -615,6 +620,20 @@ async function buildDefaultAssetBundle(): Promise<PassAssetBundle> {
     icon2x: DEFAULT_ICON_2X_PNG_BASE64,
     logo: DEFAULT_LOGO_PNG_BASE64,
     strip: DEFAULT_STRIP_PNG_BASE64
+  }
+}
+
+function buildPassAssetMap(bundle: PassAssetBundle): Record<string, Buffer> {
+  const toBuffer = (value: string) => {
+    const trimmed = (value || '').trim()
+    return Buffer.from(trimmed, 'base64')
+  }
+
+  return {
+    'icon.png': toBuffer(bundle.icon),
+    'icon@2x.png': toBuffer(bundle.icon2x),
+    'logo.png': toBuffer(bundle.logo),
+    'strip.png': toBuffer(bundle.strip)
   }
 }
 
@@ -699,37 +718,22 @@ async function resolvePassResources() {
 
   const assetsRoot = await findFirstExisting(candidateRoots)
 
-  if (!assetsRoot) {
-    throw new Error(
-      `No se encontró directorio base de pass-assets. Revisados: ${candidateRoots.join(', ')}`
-    )
-  }
-
-  const modelDir = resolvePath(process.env.PASS_MODEL_DIR, path.join(assetsRoot, 'model'))
-  const wwdrPath = resolvePath(process.env.PASS_WWDR_CERT, path.join(assetsRoot, 'wwdr.pem'))
-  const signerCertPath = resolvePath(process.env.PASS_SIGNER_CERT, path.join(assetsRoot, 'signerCert.pem'))
-  const signerKeyPath = resolvePath(process.env.PASS_SIGNER_KEY, path.join(assetsRoot, 'signerKey.pem'))
+  const wwdrPath = assetsRoot ? resolvePath(process.env.PASS_WWDR_CERT, path.join(assetsRoot, 'wwdr.pem')) : null
+  const signerCertPath = assetsRoot ? resolvePath(process.env.PASS_SIGNER_CERT, path.join(assetsRoot, 'signerCert.pem')) : null
+  const signerKeyPath = assetsRoot ? resolvePath(process.env.PASS_SIGNER_KEY, path.join(assetsRoot, 'signerKey.pem')) : null
   const signerKeyPassphrase = process.env.APPLE_PASS_KEY || process.env.PASS_SIGNER_PASSPHRASE || ''
 
   const envSignerCert = decodeBase64Env('APPLE_PASS_CERT')
   const envSignerKey = decodeBase64Env('APPLE_PASS_CERT_KEY')
-
-  await ensureExists(modelDir, 'directorio del modelo (.pass)')
-  await ensureExists(wwdrPath, 'WWDR (wwdr.pem)')
-
-  if (!envSignerCert) {
-    await ensureExists(signerCertPath, 'certificado del Pass (signerCert.pem)')
-  }
-
-  if (!envSignerKey) {
-    await ensureExists(signerKeyPath, 'clave privada del Pass (signerKey.pem)')
-  }
+  const envWwdr = decodeBase64Env('APPLE_WWDR_CERT')
 
   return {
-    modelDir,
     wwdrPath,
+    wwdrBuffer: envWwdr,
     signerCertPath,
+    signerCertBuffer: envSignerCert,
     signerKeyPath,
+    signerKeyBuffer: envSignerKey,
     signerKeyPassphrase,
     envSignerCert,
     envSignerKey
@@ -758,18 +762,6 @@ async function findFirstExisting(paths: string[]): Promise<string | null> {
   return null
 }
 
-async function ensureExists(filePath: string, label: string) {
-  try {
-    const stats = await fsp.stat(filePath)
-    if (stats.isFile() || stats.isDirectory()) {
-      return
-    }
-  } catch {
-    throw new Error(`No se encontró ${label} en ${filePath}`)
-  }
-  throw new Error(`Ruta inválida para ${label}: ${filePath}`)
-}
-
 function decodeBase64Env(name: string) {
   const raw = process.env[name]
   if (!raw) {
@@ -787,15 +779,4 @@ function decodeBase64Env(name: string) {
     console.warn(`[wallet/download] No se pudo decodificar ${name} desde base64:`, error)
     return undefined
   }
-}
-
-async function streamToBuffer(stream: NodeJS.ReadableStream) {
-  const chunks: Buffer[] = []
-  return new Promise<Buffer>((resolve, reject) => {
-    stream.on('data', (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    })
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', (err) => reject(err))
-  })
 }
