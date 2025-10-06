@@ -161,6 +161,11 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (error || !passData) {
+      console.warn('[wallet/download] pass lookup failed', {
+        token,
+        error,
+        hasData: Boolean(passData)
+      })
       return NextResponse.json({ error: 'Token inválido' }, { status: 404 })
     }
 
