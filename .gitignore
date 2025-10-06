@@ -18,6 +18,9 @@ dist
 # Gatsby files
 .cache/
 public
+!apps/web/public/
+!apps/web/public/pass-assets/
+!apps/web/public/pass-assets/**
 
 # Vuepress build output
 .vuepress/dist

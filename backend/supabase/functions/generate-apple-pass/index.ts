@@ -1,110 +1,410 @@
-import { PKPass } from 'passkit-generator';
-import { Buffer } from 'buffer';
+// @ts-ignore Deno npm specifier resolved at runtime
+import { PKPass } from 'npm:passkit-generator'
+import { Buffer } from 'node:buffer'
 
-declare const Deno: any;
-
-function toNumber(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined
   }
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
-  return fallback;
+  serve: (handler: (req: Request) => Response | Promise<Response>) => void
 }
 
-export async function handler(req: Request) {
-  try {
-    const certBase64 = Deno.env.get('APPLE_PASS_CERT');
-    const keyBase64 = Deno.env.get('APPLE_PASS_CERT_KEY');
-    const certPassword = Deno.env.get('APPLE_PASS_KEY') ?? '';
+type PassAssetBundle = {
+  icon: string
+  icon2x: string
+  logo: string
+  strip: string
+}
 
-    if (!certBase64) {
-      return new Response(JSON.stringify({ error: 'Cert not found' }), { status: 500 });
+type PassAppearance = {
+  backgroundColor: string
+  foregroundColor: string
+  labelColor: string
+  logoText: string
+  description: string
+}
+
+type SupabasePassPayload = {
+  userId?: string | null
+  qrCode?: string | null
+  businessId?: string | null
+  businessName?: string | null
+  reward?: string | null
+  currentStamps?: number | null
+  stampsRequired?: number | null
+  promotionId?: string | null
+  promotionName?: string | null
+  loyaltyCardName?: string | null
+  appearance?: PassAppearance | null
+  assets?: PassAssetBundle | null
+  serialNumber?: string | null
+}
+
+type Certificates = {
+  wwdr: Buffer
+  signerCert: Buffer
+  signerKey: Buffer
+  signerKeyPassphrase: string
+}
+
+type ResolvedPassContext = {
+  pass: Record<string, any>
+  appearance: PassAppearance
+  assets: Record<string, Buffer>
+}
+
+const PASS_TYPE_IDENTIFIER = Deno.env.get('APPLE_WALLET_PASS_TYPE_ID') ?? 'pass.com.mystamp.loyalty'
+const TEAM_IDENTIFIER = Deno.env.get('APPLE_TEAM_ID') ?? 'TEAM_PLACEHOLDER'
+const ORGANIZATION_FALLBACK = Deno.env.get('APPLE_ORGANIZATION_NAME') ?? 'Stampit'
+
+const DEFAULT_PASS_TEMPLATE: Record<string, any> = {
+  formatVersion: 1,
+  passTypeIdentifier: PASS_TYPE_IDENTIFIER,
+  description: 'Tarjeta de fidelización',
+  organizationName: ORGANIZATION_FALLBACK,
+  teamIdentifier: TEAM_IDENTIFIER,
+  backgroundColor: 'rgb(30, 58, 138)',
+  foregroundColor: 'rgb(255, 255, 255)',
+  labelColor: 'rgb(255, 255, 255)',
+  logoText: ORGANIZATION_FALLBACK,
+  generic: {
+    primaryFields: [
+      {
+        key: 'stamps',
+        label: 'Progreso',
+        value: '0/10'
+      }
+    ],
+    secondaryFields: [
+      {
+        key: 'business',
+        label: 'Negocio',
+        value: ORGANIZATION_FALLBACK
+      }
+    ],
+    auxiliaryFields: [
+      {
+        key: 'reward',
+        label: 'Recompensa',
+        value: 'Recompensa especial'
+      }
+    ]
+  },
+  backFields: [
+    {
+      key: 'instructions',
+      label: 'Cómo usar',
+      value: 'Presenta este pass para acumular sellos y canjear recompensas.'
     }
+  ],
+  barcodes: [
+    {
+      format: 'PKBarcodeFormatQR',
+      message: 'TOKEN_PLACEHOLDER',
+      messageEncoding: 'iso-8859-1'
+    }
+  ]
+}
 
-    const signerCert = Buffer.from(certBase64, 'base64');
-    const signerKey = keyBase64 ? Buffer.from(keyBase64, 'base64') : signerCert;
+const FALLBACK_ASSETS: PassAssetBundle = {
+  icon: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==',
+  icon2x: 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAABLabXuAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==',
+  logo: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==',
+  strip: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=='
+}
 
-    const {
-      userId,
-      qrCode,
-      businessName,
-      reward,
-      currentStamps,
-      stampsRequired
-    } = await req.json().catch(() => ({}));
+Deno.serve(async (req: Request) => {
+  if (req.method !== 'POST') {
+    return new Response('Method Not Allowed', {
+      status: 405,
+      headers: { 'Content-Type': 'text/plain' }
+    })
+  }
 
-    const safeCurrent = Math.max(0, toNumber(currentStamps, 0));
-    const safeRequired = Math.max(0, toNumber(stampsRequired, 0));
-    const progression = safeRequired > 0 ? `${safeCurrent}/${safeRequired}` : `${safeCurrent}`;
+  let payload: SupabasePassPayload
+  try {
+    payload = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON payload' }, 400)
+  }
 
-    const passTypeIdentifier = Deno.env.get('APPLE_PASS_TYPE_IDENTIFIER') || 'pass.com.mystamp.loyalty';
-    const teamIdentifier = Deno.env.get('APPLE_PASS_TEAM_ID') || 'TEAM_PLACEHOLDER';
-    const organizationName = businessName || Deno.env.get('APPLE_ORGANIZATION_NAME') || 'Stampit';
+  const validationError = validatePayload(payload)
+  if (validationError) {
+    return jsonResponse({ error: validationError }, 400)
+  }
 
-    const passModel = {
-      formatVersion: 1,
-      passTypeIdentifier,
-      serialNumber: (typeof userId === 'string' && userId.length > 0) ? userId : crypto.randomUUID(),
-      teamIdentifier,
-      organizationName,
-      description: 'Tarjeta de Fidelización',
-      foregroundColor: 'rgb(255, 255, 255)',
-      backgroundColor: 'rgb(0, 123, 255)',
-      generic: {
-        primaryFields: [
-          {
-            key: 'stamps',
-            label: 'Sellos',
-            value: progression
-          }
-        ],
-        secondaryFields: [
-          {
-            key: 'business',
-            label: 'Negocio',
-            value: organizationName
-          }
-        ],
-        auxiliaryFields: [
-          {
-            key: 'reward',
-            label: 'Recompensa',
-            value: reward || 'Recompensa disponible'
-          }
-        ]
-      },
-      barcodes: [
-        {
-          format: 'PKBarcodeFormatQR',
-          message: qrCode || 'codigo-qr',
-          messageEncoding: 'iso-8859-1'
-        }
-      ]
-    };
+  try {
+    const certificates = await loadCertificates()
+    const { pass, assets } = resolvePassContext(payload)
 
-    const pass = new PKPass(passModel as any, {
-      wwdr: 'https://developer.apple.com/certificationauthority/AppleWWDRCAG3.cer',
-      signerCert,
-      signerKey,
-      signerKeyPassphrase: certPassword,
-    });
+  const walletPass = new PKPass(pass, certificates, assets)
+  const buffer = await walletPass.getAsBuffer()
+  const body = new Uint8Array(buffer)
+    const filename = `${pass.serialNumber || 'wallet-pass'}.pkpass`
 
-    const buffer = pass.getAsBuffer() as unknown as Uint8Array;
-    const filename = `${passModel.serialNumber}.pkpass`;
-
-  return new Response(buffer as any, {
+  return new Response(body, {
+      status: 200,
       headers: {
         'Content-Type': 'application/vnd.apple.pkpass',
         'Content-Disposition': `attachment; filename="${filename}"`
-      },
-    });
+      }
+    })
   } catch (error) {
-    console.error('Error generating pass:', error);
-    return new Response(JSON.stringify({ error: 'Failed to generate pass' }), { status: 500 });
+    console.error('[generate-apple-pass] Failed to generate pass', error)
+    return jsonResponse({ error: 'Failed to generate Apple Wallet pass' }, 500)
   }
+})
+
+function validatePayload(payload: SupabasePassPayload): string | null {
+  if (!payload.qrCode || payload.qrCode.trim().length === 0) {
+    return 'qrCode is required'
+  }
+
+  if (!payload.businessName || payload.businessName.trim().length === 0) {
+    return 'businessName is required'
+  }
+
+  if (typeof payload.currentStamps !== 'number') {
+    return 'currentStamps is required'
+  }
+
+  if (typeof payload.stampsRequired !== 'number') {
+    return 'stampsRequired is required'
+  }
+
+  if (!payload.reward || payload.reward.trim().length === 0) {
+    return 'reward is required'
+  }
+
+  return null
+}
+
+async function loadCertificates(): Promise<Certificates> {
+  const wwdr = decodeCertificateFromEnv('APPLE_WWDR_CERT')
+  const signerCert = decodeCertificateFromEnv('APPLE_PASS_CERT')
+  const signerKey = decodeCertificateFromEnv('APPLE_PASS_CERT_KEY')
+  const signerKeyPassphrase = Deno.env.get('APPLE_PASS_CERT_PASSWORD') ?? ''
+
+  if (!wwdr || !signerCert || !signerKey) {
+    throw new Error('Missing Apple Wallet certificates in environment variables')
+  }
+
+  return {
+    wwdr,
+    signerCert,
+    signerKey,
+    signerKeyPassphrase
+  }
+}
+
+function decodeCertificateFromEnv(name: string): Buffer | null {
+  const raw = Deno.env.get(name)
+  if (!raw) {
+    return null
+  }
+
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  if (trimmed.startsWith('-----BEGIN')) {
+    return Buffer.from(trimmed)
+  }
+
+  try {
+    return Buffer.from(trimmed, 'base64')
+  } catch (error) {
+    console.warn(`[generate-apple-pass] Could not decode ${name} from base64`, error)
+    return null
+  }
+}
+
+function resolvePassContext(payload: SupabasePassPayload): ResolvedPassContext {
+  const appearance = resolveAppearance(payload.appearance)
+  const pass = buildPass(payload, appearance)
+  const assets = buildAssetMap(payload.assets)
+
+  return { pass, appearance, assets }
+}
+
+function resolveAppearance(appearance?: PassAppearance | null): PassAppearance {
+  const fallback = DEFAULT_PASS_TEMPLATE
+
+  const safe = <T extends string>(value: T | null | undefined, fallbackValue: T): T => {
+    if (!value) return fallbackValue
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? (trimmed as T) : fallbackValue
+  }
+
+  return {
+    backgroundColor: sanitizeColor(safe(appearance?.backgroundColor, fallback.backgroundColor)),
+    foregroundColor: sanitizeColor(safe(appearance?.foregroundColor, fallback.foregroundColor)),
+    labelColor: sanitizeColor(safe(appearance?.labelColor, fallback.labelColor)),
+    logoText: safe(appearance?.logoText, fallback.logoText),
+    description: safe(appearance?.description, fallback.description)
+  }
+}
+
+function sanitizeColor(input: string): string {
+  if (/^#[0-9A-Fa-f]{6}$/.test(input)) {
+    return hexToRgb(input)
+  }
+
+  if (/^#[0-9A-Fa-f]{3}$/.test(input)) {
+    const expanded = `#${input[1]}${input[1]}${input[2]}${input[2]}${input[3]}${input[3]}`
+    return hexToRgb(expanded)
+  }
+
+  return input
+}
+
+function hexToRgb(hex: string): string {
+  const value = hex.replace('#', '')
+  const bigint = parseInt(value, 16)
+  const r = (bigint >> 16) & 255
+  const g = (bigint >> 8) & 255
+  const b = bigint & 255
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function cloneTemplate<T>(template: T): any {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(template)
+  }
+  return JSON.parse(JSON.stringify(template))
+}
+
+function buildPass(payload: SupabasePassPayload, appearance: PassAppearance): Record<string, any> {
+  const base: Record<string, any> = cloneTemplate(DEFAULT_PASS_TEMPLATE)
+  const serialNumber = payload.serialNumber?.trim() || crypto.randomUUID()
+  const organizationName = payload.businessName?.trim() || ORGANIZATION_FALLBACK
+  const promotionLabel = payload.promotionName?.trim() || 'Progreso'
+  const loyaltyCardName = payload.loyaltyCardName?.trim()
+  const progressText = formatProgress(payload.currentStamps ?? 0, payload.stampsRequired ?? 0)
+
+  base.passTypeIdentifier = PASS_TYPE_IDENTIFIER
+  base.serialNumber = serialNumber
+  base.teamIdentifier = TEAM_IDENTIFIER
+  base.organizationName = organizationName
+  base.description = appearance.description
+  base.backgroundColor = appearance.backgroundColor
+  base.foregroundColor = appearance.foregroundColor
+  base.labelColor = appearance.labelColor
+  base.logoText = appearance.logoText
+
+  base.generic = base.generic || {}
+  base.generic.primaryFields = [
+    {
+      key: 'stamps',
+      label: promotionLabel,
+      value: progressText
+    }
+  ]
+  base.generic.secondaryFields = [
+    {
+      key: 'business',
+      label: 'Negocio',
+      value: organizationName
+    }
+  ]
+
+  if (loyaltyCardName) {
+    base.generic.secondaryFields.push({
+      key: 'program',
+      label: 'Programa',
+      value: loyaltyCardName
+    })
+  }
+
+  base.generic.auxiliaryFields = [
+    {
+      key: 'reward',
+      label: 'Recompensa',
+      value: payload.reward ?? 'Recompensa especial'
+    }
+  ]
+
+  base.backFields = [
+    {
+      key: 'instructions',
+      label: 'Cómo usar',
+      value: appearance.description || 'Presenta este pass para acumular sellos y canjear recompensas.'
+    },
+    {
+      key: 'progress',
+      label: 'Progreso actual',
+      value: progressText
+    },
+    {
+      key: 'reward_details',
+      label: 'Recompensa',
+      value: payload.reward ?? 'Recompensa especial'
+    }
+  ]
+
+  base.barcodes = [
+    {
+      format: 'PKBarcodeFormatQR',
+      message: payload.qrCode ?? 'TOKEN_PLACEHOLDER',
+      messageEncoding: 'iso-8859-1'
+    }
+  ]
+
+  base.userInfo = {
+    walletPassId: serialNumber,
+    businessId: payload.businessId ?? null,
+    promotionId: payload.promotionId ?? null,
+    userId: payload.userId ?? null
+  }
+
+  return base
+}
+
+function buildAssetMap(assets?: PassAssetBundle | null): Record<string, Buffer> {
+  const merged: PassAssetBundle = {
+    icon: chooseAsset(assets?.icon, FALLBACK_ASSETS.icon),
+    icon2x: chooseAsset(assets?.icon2x, FALLBACK_ASSETS.icon2x),
+    logo: chooseAsset(assets?.logo, FALLBACK_ASSETS.logo),
+    strip: chooseAsset(assets?.strip, FALLBACK_ASSETS.strip)
+  }
+
+  return {
+    'icon.png': Buffer.from(merged.icon, 'base64'),
+    'icon@2x.png': Buffer.from(merged.icon2x, 'base64'),
+    'logo.png': Buffer.from(merged.logo, 'base64'),
+    'strip.png': Buffer.from(merged.strip, 'base64')
+  }
+}
+
+function chooseAsset(input: string | null | undefined, fallback: string): string {
+  if (!input) {
+    return fallback
+  }
+
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return fallback
+  }
+
+  const dataUrlMatch = trimmed.match(/^data:image\/[^;]+;base64,(.+)$/i)
+  if (dataUrlMatch) {
+    return dataUrlMatch[1]
+  }
+
+  return trimmed
+}
+
+function formatProgress(current: number, required: number): string {
+  const safeCurrent = Number.isFinite(current) ? Math.max(0, Math.floor(current)) : 0
+  const safeRequired = Number.isFinite(required) ? Math.max(0, Math.floor(required)) : 0
+  const boundedCurrent = safeRequired > 0 ? Math.min(safeCurrent, safeRequired) : safeCurrent
+  return safeRequired > 0 ? `${boundedCurrent}/${safeRequired}` : `${boundedCurrent}`
+}
+
+function jsonResponse(body: Record<string, unknown>, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  })
 }

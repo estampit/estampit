@@ -4,29 +4,102 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabaseServer'
 import path from 'node:path'
 import { promises as fsp } from 'node:fs'
+import { Buffer } from 'node:buffer'
+import { DEFAULT_PASS_TEMPLATE } from '../templateDefaults'
+import {
+  DEFAULT_ICON_PNG_BASE64,
+  DEFAULT_ICON_2X_PNG_BASE64,
+  DEFAULT_LOGO_PNG_BASE64,
+  DEFAULT_STRIP_PNG_BASE64
+} from '../templateAssets'
+import type { Json } from '@/types/database.types'
+
+type PromotionConfig = Json
+
+type PassAssetBundle = {
+  icon: string
+  icon2x: string
+  logo: string
+  strip: string
+}
+
+type PassAppearance = {
+  backgroundColor: string
+  foregroundColor: string
+  labelColor: string
+  logoText: string
+  description: string
+}
+
+type BuiltWalletPass = {
+  pass: Record<string, any>
+  assets: PassAssetBundle
+  appearance: PassAppearance
+  meta: {
+    businessId: string
+    businessName: string
+    reward: string
+    currentStamps: number
+    stampsRequired: number
+    progressText: string
+    loyaltyCardName?: string | null
+    promotionName?: string | null
+    promotionId?: string | null
+  }
+}
 
 type SupabasePassPayload = {
   userId: string | null
   qrCode: string
+  businessId: string
   businessName: string
   reward: string
   currentStamps: number
   stampsRequired: number
+  promotionId: string | null
+  promotionName?: string | null
+  loyaltyCardName?: string | null
+  appearance: PassAppearance
+  assets: PassAssetBundle
+  serialNumber: string
 }
 
 type WalletPassWithDetails = {
   id: string
+  business_id: string
   qr_token: string
+  pass_type: string
+  promotion_id: string | null
   customer_cards: {
     customer_id: string
-    current_stamps: number
+    current_stamps: number | null
+    loyalty_card_id: string
     loyalty_cards: {
-      stamps_required: number
-      reward_description: string
+      id: string
+      name: string | null
+      reward_description: string | null
+      stamps_required: number | null
       businesses: {
+        id: string
         name: string
+        card_title: string | null
+        card_description: string | null
+        logo_url: string | null
+        primary_color: string | null
+        secondary_color: string | null
+        background_color: string | null
+        text_color: string | null
       }
     }
+  }
+  promotions: null | {
+    id: string
+    name: string
+    description: string | null
+    reward_description: string | null
+    starts_at: string | null
+    ends_at: string | null
+    config: PromotionConfig
   }
 }
 
@@ -45,17 +118,41 @@ export async function GET(request: NextRequest) {
     const { data: passData, error } = await supabase
       .from('wallet_passes')
       .select(`
-        *,
+        id,
+        business_id,
+        qr_token,
+        pass_type,
+        promotion_id,
         customer_cards!inner (
           customer_id,
           current_stamps,
+          loyalty_card_id,
           loyalty_cards!inner (
-            stamps_required,
+            id,
+            name,
             reward_description,
+            stamps_required,
             businesses!inner (
-              name
+              id,
+              name,
+              card_title,
+              card_description,
+              logo_url,
+              primary_color,
+              secondary_color,
+              background_color,
+              text_color
             )
           )
+        ),
+        promotions!left (
+          id,
+          name,
+          description,
+          reward_description,
+          starts_at,
+          ends_at,
+          config
         )
       `)
       .eq('qr_token', token)
@@ -67,19 +164,26 @@ export async function GET(request: NextRequest) {
 
     const data = passData as WalletPassWithDetails
 
-    const passPayload = buildPassPayload(data, token)
+    const builtPass = await buildPassPayload(data, token)
 
-    const signedResponse = await tryGenerateSignedPass(passPayload)
+    const signedResponse = await tryGenerateSignedPass(builtPass)
     if (signedResponse) {
       return signedResponse
     }
 
-    const supabasePassResponse = await tryGenerateSupabasePass(token, passPayload, data)
+    const supabasePassResponse = await tryGenerateSupabasePass(token, builtPass, data)
     if (supabasePassResponse) {
       return supabasePassResponse
     }
 
-    return new NextResponse(JSON.stringify(passPayload, null, 2), {
+    const fallbackBody = JSON.stringify({
+      pass: builtPass.pass,
+      appearance: builtPass.appearance,
+      assets: builtPass.assets,
+      meta: builtPass.meta
+    }, null, 2)
+
+    return new NextResponse(fallbackBody, {
       headers: {
         'Content-Type': 'application/json',
         'Content-Disposition': 'attachment; filename="wallet-pass.json"'
@@ -92,50 +196,160 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function buildPassPayload(data: WalletPassWithDetails, token: string) {
+async function buildPassPayload(data: WalletPassWithDetails, token: string): Promise<BuiltWalletPass> {
+  const loyaltyCard = data.customer_cards?.loyalty_cards
+  const business = loyaltyCard?.businesses
+
+  if (!loyaltyCard || !business) {
+    throw new Error('Datos incompletos para generar el pass')
+  }
+
+  const promotion = data.promotions
+
   const passTypeIdentifier = process.env.APPLE_WALLET_PASS_TYPE_ID || 'pass.com.mystamp.loyalty'
   const teamIdentifier = process.env.APPLE_TEAM_ID || 'TEAM_PLACEHOLDER'
-  const organizationName = process.env.APPLE_ORGANIZATION_NAME || data.customer_cards.loyalty_cards.businesses.name || 'MyStamp'
+  const organizationName = business.name || process.env.APPLE_ORGANIZATION_NAME || 'Stampit'
 
-  return {
-    formatVersion: 1,
-    passTypeIdentifier,
-    serialNumber: data.id,
-    teamIdentifier,
-    organizationName,
-    description: 'Tarjeta de Fidelización',
-    foregroundColor: 'rgb(255, 255, 255)',
-    backgroundColor: 'rgb(0, 123, 255)',
-    generic: {
-      primaryFields: [
-        {
-          key: 'stamps',
-          label: 'Sellos',
-          value: `${data.customer_cards.current_stamps || 0}/${data.customer_cards.loyalty_cards.stamps_required || 10}`
-        }
-      ],
-      secondaryFields: [
-        {
-          key: 'business',
-          label: 'Negocio',
-          value: data.customer_cards.loyalty_cards.businesses.name || 'Negocio'
-        }
-      ],
-      auxiliaryFields: [
-        {
-          key: 'reward',
-          label: 'Recompensa',
-          value: data.customer_cards.loyalty_cards.reward_description || 'Descuento especial'
-        }
-      ]
+  const description = (business.card_description && business.card_description.trim())
+    || (typeof promotion?.description === 'string' && promotion.description.trim())
+    || DEFAULT_PASS_TEMPLATE.description
+    || 'Tarjeta de fidelización'
+
+  const backgroundColor = toPassColor(business.background_color, DEFAULT_PASS_TEMPLATE.backgroundColor)
+  const foregroundColor = toPassColor(business.text_color, DEFAULT_PASS_TEMPLATE.foregroundColor)
+  const labelColor = toPassColor(business.secondary_color ?? business.primary_color, DEFAULT_PASS_TEMPLATE.labelColor || foregroundColor)
+  const logoText = business.card_title?.trim() || organizationName
+
+  const currentStamps = Math.max(0, Math.floor(data.customer_cards.current_stamps ?? 0))
+  const stampsRequired = Math.max(0, Math.floor(loyaltyCard.stamps_required ?? 0))
+  const rewardDescription = promotion?.reward_description
+    || loyaltyCard.reward_description
+    || 'Recompensa especial'
+  const loyaltyCardName = loyaltyCard.name
+  const promotionName = promotion?.name ?? null
+  const progressText = formatProgress(currentStamps, stampsRequired)
+
+  const pass: Record<string, any> = cloneTemplate(DEFAULT_PASS_TEMPLATE)
+
+  pass.passTypeIdentifier = passTypeIdentifier
+  pass.serialNumber = data.id
+  pass.teamIdentifier = teamIdentifier
+  pass.organizationName = organizationName
+  pass.description = description
+  pass.backgroundColor = backgroundColor
+  pass.foregroundColor = foregroundColor
+  pass.labelColor = labelColor
+  pass.logoText = logoText
+
+  pass.generic = pass.generic || {}
+  pass.generic.primaryFields = [
+    {
+      key: 'stamps',
+      label: promotionName || 'Progreso',
+      value: progressText
+    }
+  ]
+  pass.generic.secondaryFields = [
+    {
+      key: 'business',
+      label: 'Negocio',
+      value: organizationName
+    }
+  ]
+  if (loyaltyCardName) {
+    pass.generic.secondaryFields.push({
+      key: 'program',
+      label: 'Programa',
+      value: loyaltyCardName
+    })
+  }
+  pass.generic.auxiliaryFields = [
+    {
+      key: 'reward',
+      label: 'Recompensa',
+      value: rewardDescription
+    }
+  ]
+
+  const backFields = [
+    {
+      key: 'instructions',
+      label: 'Cómo usar',
+      value: business.card_description?.trim() || 'Presenta este pass para acumular sellos y canjear recompensas.'
     },
-    barcodes: [
+    {
+      key: 'progress',
+      label: 'Progreso actual',
+      value: progressText
+    },
+    {
+      key: 'reward_details',
+      label: 'Recompensa',
+      value: rewardDescription
+    }
+  ]
+  pass.backFields = backFields
+
+  if (!Array.isArray(pass.barcodes) || pass.barcodes.length === 0) {
+    pass.barcodes = [
       {
         format: 'PKBarcodeFormatQR',
         message: token,
         messageEncoding: 'iso-8859-1'
       }
     ]
+  } else {
+    const [first, ...rest] = pass.barcodes
+    pass.barcodes = [
+      {
+        ...first,
+        format: first?.format || 'PKBarcodeFormatQR',
+        message: token,
+        messageEncoding: first?.messageEncoding || 'iso-8859-1'
+      },
+      ...rest
+    ]
+  }
+
+  if (promotion?.ends_at) {
+    pass.expirationDate = promotion.ends_at
+    pass.relevantDate = promotion.ends_at
+  } else if (promotion?.starts_at) {
+    pass.relevantDate = promotion.starts_at
+  }
+
+  pass.userInfo = {
+    walletPassId: data.id,
+    customerCardId: loyaltyCard.id,
+    customerCardUuid: data.customer_cards.loyalty_card_id,
+    promotionId: data.promotion_id,
+    businessId: data.business_id
+  }
+
+  const assets = await resolveAssetBundle(business.logo_url)
+  const appearance: PassAppearance = {
+    backgroundColor,
+    foregroundColor,
+    labelColor,
+    logoText,
+    description
+  }
+
+  return {
+    pass,
+    assets,
+    appearance,
+    meta: {
+      businessId: data.business_id,
+      businessName: organizationName,
+      reward: rewardDescription,
+      currentStamps,
+      stampsRequired,
+      progressText,
+      loyaltyCardName,
+      promotionName,
+      promotionId: data.promotion_id ?? null
+    }
   }
 }
 
@@ -146,27 +360,40 @@ const shouldAttemptSigning = () => {
   return true
 }
 
-async function tryGenerateSignedPass(passPayload: Record<string, any>) {
+async function tryGenerateSignedPass(builtPass: BuiltWalletPass) {
   if (!shouldAttemptSigning()) {
     return null
   }
 
   try {
-    const { modelDir, wwdrPath, signerCertPath, signerKeyPath, signerKeyPassphrase } = await resolvePassResources()
+    const {
+      modelDir,
+      wwdrPath,
+      signerCertPath,
+      signerKeyPath,
+      signerKeyPassphrase,
+      envSignerCert,
+      envSignerKey
+    } = await resolvePassResources()
 
     const { PKPass } = (await import('passkit-generator')) as any
-    const pass = (await PKPass.from(passPayload as any, {
-      model: modelDir,
-      certificates: {
-        wwdr: await fsp.readFile(wwdrPath),
-        signerCert: await fsp.readFile(signerCertPath),
-        signerKey: await fsp.readFile(signerKeyPath),
-        signerKeyPassphrase
-      }
-    })) as any
+    const certificates = {
+      wwdr: await fsp.readFile(wwdrPath),
+      signerCert: envSignerCert ?? await fsp.readFile(signerCertPath),
+      signerKey: envSignerKey ?? await fsp.readFile(signerKeyPath),
+      signerKeyPassphrase
+    }
+
+    const pass = (await PKPass.from(
+      {
+        model: modelDir,
+        certificates
+      },
+      builtPass.pass as any
+    )) as any
 
     const buffer = await streamToBuffer(pass.stream as NodeJS.ReadableStream)
-    const filename = `${passPayload.serialNumber || 'wallet-pass'}.pkpass`
+    const filename = `${builtPass.pass.serialNumber || 'wallet-pass'}.pkpass`
 
     const body = new Uint8Array(buffer)
 
@@ -177,12 +404,12 @@ async function tryGenerateSignedPass(passPayload: Record<string, any>) {
       }
     })
   } catch (error) {
-    console.warn('[wallet/download] No se pudo firmar el pass automáticamente. Enviando JSON. Detalle:', error)
+    console.warn('[wallet/download] No se pudo firmar el pass automáticamente. Detalle:', error)
     return null
   }
 }
 
-async function tryGenerateSupabasePass(token: string, passPayload: Record<string, any>, data: WalletPassWithDetails) {
+async function tryGenerateSupabasePass(token: string, builtPass: BuiltWalletPass, data: WalletPassWithDetails) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
@@ -193,10 +420,17 @@ async function tryGenerateSupabasePass(token: string, passPayload: Record<string
   const payload: SupabasePassPayload = {
     userId: data.customer_cards.customer_id ?? null,
     qrCode: token,
-    businessName: data.customer_cards.loyalty_cards.businesses.name || 'Negocio',
-    reward: data.customer_cards.loyalty_cards.reward_description || 'Recompensa',
-    currentStamps: data.customer_cards.current_stamps ?? 0,
-    stampsRequired: data.customer_cards.loyalty_cards.stamps_required ?? 0
+    businessId: builtPass.meta.businessId,
+    businessName: builtPass.meta.businessName,
+    reward: builtPass.meta.reward,
+    currentStamps: builtPass.meta.currentStamps,
+    stampsRequired: builtPass.meta.stampsRequired,
+    promotionId: builtPass.meta.promotionId ?? null,
+    promotionName: builtPass.meta.promotionName ?? null,
+    loyaltyCardName: builtPass.meta.loyaltyCardName ?? null,
+    appearance: builtPass.appearance,
+    assets: builtPass.assets,
+    serialNumber: builtPass.pass.serialNumber ?? data.id
   }
 
   try {
@@ -217,7 +451,7 @@ async function tryGenerateSupabasePass(token: string, passPayload: Record<string
     }
 
     const arrayBuffer = await response.arrayBuffer()
-    const filename = `${passPayload.serialNumber || 'wallet-pass'}.pkpass`
+  const filename = `${builtPass.pass.serialNumber || 'wallet-pass'}.pkpass`
 
     return new NextResponse(new Uint8Array(arrayBuffer), {
       headers: {
@@ -231,6 +465,85 @@ async function tryGenerateSupabasePass(token: string, passPayload: Record<string
   }
 }
 
+async function buildDefaultAssetBundle(): Promise<PassAssetBundle> {
+  return {
+    icon: DEFAULT_ICON_PNG_BASE64,
+    icon2x: DEFAULT_ICON_2X_PNG_BASE64,
+    logo: DEFAULT_LOGO_PNG_BASE64,
+    strip: DEFAULT_STRIP_PNG_BASE64
+  }
+}
+
+async function resolveAssetBundle(logoUrl: string | null): Promise<PassAssetBundle> {
+  const bundle = await buildDefaultAssetBundle()
+
+  if (!logoUrl) {
+    return bundle
+  }
+
+  const remoteLogo = await fetchImageAsBase64(logoUrl)
+  if (remoteLogo) {
+    bundle.logo = remoteLogo
+    bundle.strip = remoteLogo
+  }
+
+  return bundle
+}
+
+function toPassColor(color: string | null | undefined, fallback: string): string {
+  if (!color) return fallback
+  const trimmed = color.trim()
+  if (!trimmed) return fallback
+
+  if (/^#[0-9A-Fa-f]{6}$/.test(trimmed)) {
+    return hexToRgb(trimmed)
+  }
+
+  if (/^#[0-9A-Fa-f]{3}$/.test(trimmed)) {
+    const expanded = `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`
+    return hexToRgb(expanded)
+  }
+
+  if (/^rgb(a)?\(/i.test(trimmed)) {
+    return trimmed
+  }
+
+  return fallback
+}
+
+function hexToRgb(hex: string): string {
+  const value = hex.replace('#', '')
+  const bigint = parseInt(value, 16)
+  const r = (bigint >> 16) & 255
+  const g = (bigint >> 8) & 255
+  const b = bigint & 255
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function formatProgress(current: number, required: number): string {
+  const boundedCurrent = required > 0 ? Math.min(current, required) : current
+  return required > 0 ? `${boundedCurrent}/${required}` : `${boundedCurrent}`
+}
+
+function cloneTemplate<T>(template: T): T {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(template)
+  }
+  return JSON.parse(JSON.stringify(template)) as T
+}
+
+async function fetchImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, { cache: 'no-store' })
+    if (!response.ok) return null
+    const arrayBuffer = await response.arrayBuffer()
+    return Buffer.from(arrayBuffer).toString('base64')
+  } catch (error) {
+    console.warn(`[wallet/download] No se pudo obtener el logo desde ${url}:`, error)
+    return null
+  }
+}
+
 async function resolvePassResources() {
   const rootOverride = process.env.PASS_ASSETS_DIR
   const defaultRoot = path.join(process.cwd(), 'public', 'pass-assets')
@@ -240,14 +553,31 @@ async function resolvePassResources() {
   const wwdrPath = resolvePath(process.env.PASS_WWDR_CERT, path.join(assetsRoot, 'wwdr.pem'))
   const signerCertPath = resolvePath(process.env.PASS_SIGNER_CERT, path.join(assetsRoot, 'signerCert.pem'))
   const signerKeyPath = resolvePath(process.env.PASS_SIGNER_KEY, path.join(assetsRoot, 'signerKey.pem'))
-  const signerKeyPassphrase = process.env.PASS_SIGNER_PASSPHRASE || ''
+  const signerKeyPassphrase = process.env.APPLE_PASS_KEY || process.env.PASS_SIGNER_PASSPHRASE || ''
+
+  const envSignerCert = decodeBase64Env('APPLE_PASS_CERT')
+  const envSignerKey = decodeBase64Env('APPLE_PASS_CERT_KEY')
 
   await ensureExists(modelDir, 'directorio del modelo (.pass)')
   await ensureExists(wwdrPath, 'WWDR (wwdr.pem)')
-  await ensureExists(signerCertPath, 'certificado del Pass (signerCert.pem)')
-  await ensureExists(signerKeyPath, 'clave privada del Pass (signerKey.pem)')
 
-  return { modelDir, wwdrPath, signerCertPath, signerKeyPath, signerKeyPassphrase }
+  if (!envSignerCert) {
+    await ensureExists(signerCertPath, 'certificado del Pass (signerCert.pem)')
+  }
+
+  if (!envSignerKey) {
+    await ensureExists(signerKeyPath, 'clave privada del Pass (signerKey.pem)')
+  }
+
+  return {
+    modelDir,
+    wwdrPath,
+    signerCertPath,
+    signerKeyPath,
+    signerKeyPassphrase,
+    envSignerCert,
+    envSignerKey
+  }
 }
 
 function resolvePath(envValue: string | undefined, defaultPath: string) {
@@ -263,10 +593,29 @@ async function ensureExists(filePath: string, label: string) {
     if (stats.isFile() || stats.isDirectory()) {
       return
     }
-  } catch (error) {
+  } catch {
     throw new Error(`No se encontró ${label} en ${filePath}`)
   }
   throw new Error(`Ruta inválida para ${label}: ${filePath}`)
+}
+
+function decodeBase64Env(name: string) {
+  const raw = process.env[name]
+  if (!raw) {
+    return undefined
+  }
+
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  try {
+    return Buffer.from(trimmed, 'base64')
+  } catch (error) {
+    console.warn(`[wallet/download] No se pudo decodificar ${name} desde base64:`, error)
+    return undefined
+  }
 }
 
 async function streamToBuffer(stream: NodeJS.ReadableStream) {

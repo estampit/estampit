@@ -216,6 +216,12 @@ export type Database = {
           id: string
           is_active: boolean | null
           logo_url: string | null
+          primary_color: string | null
+          secondary_color: string | null
+          background_color: string | null
+          text_color: string | null
+          card_title: string | null
+          card_description: string | null
           name: string
           owner_id: string
           phone: string | null
@@ -231,6 +237,12 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           logo_url?: string | null
+          primary_color?: string | null
+          secondary_color?: string | null
+          background_color?: string | null
+          text_color?: string | null
+          card_title?: string | null
+          card_description?: string | null
           name: string
           owner_id: string
           phone?: string | null
@@ -246,6 +258,12 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           logo_url?: string | null
+          primary_color?: string | null
+          secondary_color?: string | null
+          background_color?: string | null
+          text_color?: string | null
+          card_title?: string | null
+          card_description?: string | null
           name?: string
           owner_id?: string
           phone?: string | null
@@ -510,6 +528,7 @@ export type Database = {
           last_used_at: string | null
           promotion_id: string
           usage_count: number
+          pending_rewards: number
         }
         Insert: {
           created_at?: string
@@ -519,6 +538,7 @@ export type Database = {
           last_used_at?: string | null
           promotion_id: string
           usage_count?: number
+          pending_rewards?: number
         }
         Update: {
           created_at?: string
@@ -528,6 +548,7 @@ export type Database = {
           last_used_at?: string | null
           promotion_id?: string
           usage_count?: number
+          pending_rewards?: number
         }
         Relationships: [
           {
@@ -553,6 +574,81 @@ export type Database = {
           },
         ]
       }
+      promotion_scan_events: {
+        Row: {
+          id: string
+          business_id: string
+          promotion_id: string
+          customer_id: string
+          customer_card_id: string
+          wallet_pass_id: string
+          scan_source: string
+          points_awarded: number
+          metadata: Json
+          scanned_at: string
+        }
+        Insert: {
+          id?: string
+          business_id: string
+          promotion_id: string
+          customer_id: string
+          customer_card_id: string
+          wallet_pass_id: string
+          scan_source?: string
+          points_awarded?: number
+          metadata?: Json
+          scanned_at?: string
+        }
+        Update: {
+          id?: string
+          business_id?: string
+          promotion_id?: string
+          customer_id?: string
+          customer_card_id?: string
+          wallet_pass_id?: string
+          scan_source?: string
+          points_awarded?: number
+          metadata?: Json
+          scanned_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotion_scan_events_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_scan_events_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_scan_events_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_scan_events_customer_card_id_fkey"
+            columns: ["customer_card_id"]
+            isOneToOne: false
+            referencedRelation: "customer_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_scan_events_wallet_pass_id_fkey"
+            columns: ["wallet_pass_id"]
+            isOneToOne: false
+            referencedRelation: "wallet_passes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       promotions: {
         Row: {
           business_id: string
@@ -568,6 +664,7 @@ export type Database = {
           promo_type: string
           starts_at: string
           updated_at: string
+          reward_description: string | null
         }
         Insert: {
           business_id: string
@@ -583,6 +680,7 @@ export type Database = {
           promo_type: string
           starts_at?: string
           updated_at?: string
+          reward_description?: string | null
         }
         Update: {
           business_id?: string
@@ -598,6 +696,7 @@ export type Database = {
           promo_type?: string
           starts_at?: string
           updated_at?: string
+          reward_description?: string | null
         }
         Relationships: [
           {
@@ -691,6 +790,7 @@ export type Database = {
           reward_description: string | null
           reward_type: string
           reward_value: string
+          promotion_id: string | null
         }
         Insert: {
           business_id: string
@@ -705,6 +805,7 @@ export type Database = {
           reward_description?: string | null
           reward_type: string
           reward_value: string
+          promotion_id?: string | null
         }
         Update: {
           business_id?: string
@@ -719,6 +820,7 @@ export type Database = {
           reward_description?: string | null
           reward_type?: string
           reward_value?: string
+          promotion_id?: string | null
         }
         Relationships: [
           {
@@ -740,6 +842,13 @@ export type Database = {
             columns: ["redeemed_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rewards_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
             referencedColumns: ["id"]
           },
         ]
@@ -901,6 +1010,7 @@ export type Database = {
           qr_token: string
           updated_at: string
           usage_count: number
+          promotion_id: string | null
         }
         Insert: {
           business_id: string
@@ -913,6 +1023,7 @@ export type Database = {
           qr_token: string
           updated_at?: string
           usage_count?: number
+          promotion_id?: string | null
         }
         Update: {
           business_id?: string
@@ -925,6 +1036,7 @@ export type Database = {
           qr_token?: string
           updated_at?: string
           usage_count?: number
+          promotion_id?: string | null
         }
         Relationships: [
           {
@@ -939,6 +1051,13 @@ export type Database = {
             columns: ["customer_card_id"]
             isOneToOne: false
             referencedRelation: "customer_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wallet_passes_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
             referencedColumns: ["id"]
           },
         ]
