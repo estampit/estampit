@@ -204,13 +204,15 @@ async function tryGenerateSupabasePass(token: string, passPayload: Record<string
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${supabaseServiceKey}`
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        apikey: supabaseServiceKey
       },
       body: JSON.stringify(payload)
     })
 
     if (!response.ok) {
-      console.warn('[wallet/download] Supabase pass signing failed', response.status, await response.text())
+      const errorText = await response.text()
+      console.warn('[wallet/download] Supabase pass signing failed', response.status, errorText)
       return null
     }
 
