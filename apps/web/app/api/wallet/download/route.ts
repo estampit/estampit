@@ -241,9 +241,42 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     return null
   }
 
-  const passTypeIdentifier = process.env.APPLE_WALLET_PASS_TYPE_ID || 'pass.com.mystamp.loyalty'
-  const teamIdentifier = process.env.APPLE_TEAM_ID || 'TEAM_PLACEHOLDER'
-  const organizationName = business.name || process.env.APPLE_ORGANIZATION_NAME || 'Stampit'
+  const envPassTypeIdentifier = resolveEnvString(
+    'APPLE_WALLET_PASS_TYPE_ID',
+    'APPLE_PASS_TYPE_IDENTIFIER',
+    'PASS_TYPE_ID',
+    'PASS_TYPE_IDENTIFIER'
+  )
+  const envTeamIdentifier = resolveEnvString(
+    'APPLE_WALLET_TEAM_ID',
+    'APPLE_PASS_TEAM_ID',
+    'APPLE_TEAM_ID',
+    'TEAM_ID'
+  )
+  const envOrganizationName = resolveEnvString(
+    'APPLE_ORGANIZATION_NAME',
+    'APPLE_PASS_ORGANIZATION_NAME',
+    'PASS_ORGANIZATION_NAME'
+  )
+
+  const passTypeIdentifier = (envPassTypeIdentifier || DEFAULT_PASS_TEMPLATE.passTypeIdentifier).trim()
+  const teamIdentifier = (envTeamIdentifier || DEFAULT_PASS_TEMPLATE.teamIdentifier || 'TEAM_PLACEHOLDER').trim()
+
+  const organizationNameSetting = pickSetting(
+    'organization_name',
+    'organizationName',
+    'branding.organizationName',
+    'appearance.organization_name',
+    'appearance.organizationName'
+  )
+
+  const organizationName = pickText(
+    organizationNameSetting,
+    business.name,
+    envOrganizationName,
+    DEFAULT_PASS_TEMPLATE.organizationName,
+    'Stampit'
+  ) || 'Stampit'
 
   const cardTitleSetting = pickSetting('card_title', 'cardTitle', 'display.card_title', 'display.cardTitle', 'appearance.card_title', 'appearance.cardTitle', 'branding.cardTitle')
   const cardDescriptionSetting = pickSetting('card_description', 'cardDescription', 'display.card_description', 'display.cardDescription', 'appearance.card_description', 'appearance.cardDescription', 'details.description')
@@ -784,4 +817,18 @@ function decodeBase64Env(name: string) {
     console.warn(`[wallet/download] No se pudo decodificar ${name} desde base64:`, error)
     return undefined
   }
+}
+
+function resolveEnvString(...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = process.env[key]
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed.length > 0) {
+        return trimmed
+      }
+    }
+  }
+
+  return null
 }
