@@ -7,6 +7,7 @@ import type { Database } from '@/types/database.types'
 import path from 'node:path'
 import { promises as fsp } from 'node:fs'
 import { Buffer } from 'node:buffer'
+import type { Json } from '@/types/database.types'
 import { DEFAULT_PASS_TEMPLATE } from '../templateDefaults'
 import {
   DEFAULT_ICON_PNG_BASE64,
@@ -14,7 +15,10 @@ import {
   DEFAULT_LOGO_PNG_BASE64,
   DEFAULT_STRIP_PNG_BASE64
 } from '../templateAssets'
-import type { Json } from '@/types/database.types'
+import {
+  ensureSettingsObject,
+  createSettingsAccessor
+} from '@/lib/settings'
 
 type PromotionConfig = Json
 
@@ -44,9 +48,15 @@ type BuiltWalletPass = {
     currentStamps: number
     stampsRequired: number
     progressText: string
+    progressLabel?: string
+    progressStyle?: 'fraction' | 'percentage'
+    highlightReward?: boolean
+    barcodeFormat?: string
     loyaltyCardName?: string | null
     promotionName?: string | null
     promotionId?: string | null
+    scanCount?: number
+    passVersion?: number
   }
 }
 
@@ -72,6 +82,10 @@ type WalletPassWithDetails = {
   qr_token: string
   pass_type: string
   promotion_id: string | null
+  usage_count: number
+  last_known_stamps: number
+  last_known_progress: string | null
+  pass_version: number
   customer_cards: {
     customer_id: string
     current_stamps: number | null
@@ -121,6 +135,10 @@ export async function GET(request: NextRequest) {
         qr_token,
         pass_type,
         promotion_id,
+        usage_count,
+        last_known_stamps,
+        last_known_progress,
+        pass_version,
         customer_cards!inner (
           customer_id,
           current_stamps,
@@ -281,11 +299,20 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
   const cardTitleSetting = pickSetting('card_title', 'cardTitle', 'display.card_title', 'display.cardTitle', 'appearance.card_title', 'appearance.cardTitle', 'branding.cardTitle')
   const cardDescriptionSetting = pickSetting('card_description', 'cardDescription', 'display.card_description', 'display.cardDescription', 'appearance.card_description', 'appearance.cardDescription', 'details.description')
   const logoTextSetting = pickSetting('logo_text', 'logoText', 'appearance.logo_text', 'appearance.logoText', 'branding.logoText')
-  const backgroundSetting = pickSetting('background_color', 'backgroundColor', 'appearance.background_color', 'appearance.backgroundColor', 'appearance.background', 'colors.background', 'appearance.colors.background')
-  const primarySetting = pickSetting('primary_color', 'primaryColor', 'appearance.primary_color', 'appearance.primaryColor', 'colors.primary')
-  const secondarySetting = pickSetting('secondary_color', 'secondaryColor', 'appearance.secondary_color', 'appearance.secondaryColor', 'colors.secondary')
-  const textSetting = pickSetting('text_color', 'textColor', 'appearance.text_color', 'appearance.textColor', 'appearance.foreground', 'appearance.foregroundColor', 'colors.text', 'colors.foreground')
-  const accentSetting = pickSetting('accent_color', 'accentColor', 'appearance.accent_color', 'appearance.accentColor', 'colors.accent', 'colors.highlight')
+  const backgroundSetting = pickSetting('background_color', 'backgroundColor', 'appearance.background_color', 'appearance.backgroundColor', 'appearance.background', 'colors.background', 'appearance.colors.background', 'appearance.pass.background', 'pass.backgroundColor')
+  const primarySetting = pickSetting('primary_color', 'primaryColor', 'appearance.primary_color', 'appearance.primaryColor', 'colors.primary', 'appearance.pass.primaryColor', 'pass.primaryColor')
+  const secondarySetting = pickSetting('secondary_color', 'secondaryColor', 'appearance.secondary_color', 'appearance.secondaryColor', 'colors.secondary', 'appearance.pass.secondaryColor', 'pass.secondaryColor')
+  const textSetting = pickSetting('text_color', 'textColor', 'appearance.text_color', 'appearance.textColor', 'appearance.foreground', 'appearance.foregroundColor', 'colors.text', 'colors.foreground', 'appearance.pass.textColor', 'pass.textColor')
+  const accentSetting = pickSetting('accent_color', 'accentColor', 'appearance.accent_color', 'appearance.accentColor', 'colors.accent', 'colors.highlight', 'appearance.pass.accentColor', 'pass.accentColor')
+  const labelSetting = pickSetting('label_color', 'labelColor', 'appearance.label_color', 'appearance.labelColor', 'colors.label', 'appearance.colors.label', 'appearance.pass.labelColor', 'pass.labelColor')
+  const progressLabelSetting = pickSetting('progress_label', 'progressLabel', 'appearance.progress_label', 'appearance.progressLabel', 'display.progress_label', 'pass.progress_label', 'pass.progressLabel', 'appearance.pass.progress_label', 'appearance.pass.progressLabel')
+  const rewardLabelSetting = pickSetting('reward_label', 'rewardLabel', 'appearance.reward_label', 'appearance.rewardLabel', 'pass.reward_label', 'pass.rewardLabel', 'appearance.pass.reward_label', 'appearance.pass.rewardLabel')
+  const instructionsSetting = pickSetting('instructions', 'appearance.instructions', 'appearance.pass.instructions', 'pass.instructions', 'card.instructions')
+  const barcodeFormatSetting = pickSetting('barcode_format', 'barcodeFormat', 'appearance.barcode_format', 'appearance.pass.barcode_format', 'pass.barcode_format', 'pass.barcode.format')
+  const progressStyleSetting = pickSetting('progress_style', 'progressStyle', 'appearance.progress_style', 'appearance.pass.progress_style', 'pass.progress_style', 'pass.progress.style')
+  const highlightRewardSetting = pickSetting('highlight_reward', 'highlightReward', 'appearance.highlight_reward', 'appearance.pass.highlight_reward', 'pass.highlight_reward')
+  const stampDisplaySetting = pickSetting('show_stamp_bubbles', 'showStampBubbles', 'appearance.show_stamp_bubbles', 'appearance.pass.show_stamp_bubbles', 'pass.show_stamp_bubbles')
+  const passTypeSetting = pickSetting('pass_type', 'passType', 'appearance.pass_type', 'appearance.pass.type', 'pass.type')
 
   const resolvedPromotionDescription = pickText(promotion?.description)
   const resolvedCardDescription = pickText(
@@ -308,11 +335,12 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
 
   const rawBackground = pickText(backgroundSetting, primarySetting)
   const rawForeground = pickText(textSetting, accentSetting, primarySetting)
-  const rawLabel = pickText(accentSetting, secondarySetting, primarySetting, rawForeground)
+  const rawLabel = pickText(labelSetting, accentSetting, secondarySetting, primarySetting, rawForeground)
 
   const backgroundColor = toPassColor(rawBackground, DEFAULT_PASS_TEMPLATE.backgroundColor)
   const foregroundColor = toPassColor(rawForeground, DEFAULT_PASS_TEMPLATE.foregroundColor)
   const labelColor = toPassColor(rawLabel, DEFAULT_PASS_TEMPLATE.labelColor || foregroundColor)
+  const accentColor = toPassColor(pickText(accentSetting, secondarySetting, rawForeground, primarySetting), foregroundColor)
 
   const currentStamps = Math.max(0, Math.floor(data.customer_cards.current_stamps ?? 0))
   const stampsRequired = Math.max(0, Math.floor(loyaltyCard.stamps_required ?? 0))
@@ -321,9 +349,56 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     || 'Recompensa especial'
   const loyaltyCardName = loyaltyCard.name
   const promotionName = promotion?.name ?? null
-  const progressText = formatProgress(currentStamps, stampsRequired)
+  const scanCount = data.usage_count ?? 0
+  const passVersion = data.pass_version ?? 1
+  const boundedCurrent = stampsRequired > 0 ? Math.min(currentStamps, stampsRequired) : currentStamps
+  const normalizedProgressStyle = (progressStyleSetting || '').toString().trim().toLowerCase()
+  const progressStyle = normalizedProgressStyle === 'percentage' ? 'percentage' : 'fraction'
+  const progressText = progressStyle === 'percentage' && stampsRequired > 0
+    ? `${Math.min(100, Math.round((boundedCurrent / Math.max(stampsRequired, 1)) * 100))}%`
+    : formatProgress(currentStamps, stampsRequired)
+  const progressLabel = pickText(progressLabelSetting, promotionName, 'Progreso') || 'Progreso'
+  const rewardLabel = pickText(rewardLabelSetting, 'Recompensa') || 'Recompensa'
+  const instructionsValue = pickText(
+    instructionsSetting,
+    resolvedCardDescription,
+    DEFAULT_PASS_TEMPLATE.backFields?.[0]?.value,
+    'Presenta este pass para acumular sellos y canjear recompensas.'
+  ) || 'Presenta este pass para acumular sellos y canjear recompensas.'
+  const highlightReward = (() => {
+    if (highlightRewardSetting === null || highlightRewardSetting === undefined) return true
+    const normalized = String(highlightRewardSetting).trim().toLowerCase()
+    if (['false', '0', 'no'].includes(normalized)) return false
+    if (['true', '1', 'yes'].includes(normalized)) return true
+    return Boolean(highlightRewardSetting)
+  })()
+  const showStampBubbles = (() => {
+    if (stampDisplaySetting === null || stampDisplaySetting === undefined) return true
+    const normalized = String(stampDisplaySetting).trim().toLowerCase()
+    if (['false', '0', 'no'].includes(normalized)) return false
+    if (['true', '1', 'yes'].includes(normalized)) return true
+    return Boolean(stampDisplaySetting)
+  })()
 
   const pass: Record<string, any> = cloneTemplate(DEFAULT_PASS_TEMPLATE)
+  const allowedPassTypes = new Map<string, string>([
+    ['generic', 'generic'],
+    ['storecard', 'storeCard'],
+    ['store_card', 'storeCard'],
+    ['coupon', 'coupon'],
+    ['eventticket', 'eventTicket'],
+    ['event_ticket', 'eventTicket'],
+    ['boardingpass', 'boardingPass'],
+    ['boarding_pass', 'boardingPass']
+  ])
+  let resolvedPassType = 'generic'
+  if (passTypeSetting) {
+    const normalizedPass = passTypeSetting.toString().trim().toLowerCase()
+    const mapped = allowedPassTypes.get(normalizedPass)
+    if (mapped) {
+      resolvedPassType = mapped
+    }
+  }
 
   pass.passTypeIdentifier = passTypeIdentifier
   pass.serialNumber = data.id
@@ -339,7 +414,7 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
   pass.generic.primaryFields = [
     {
       key: 'stamps',
-      label: promotionName || 'Progreso',
+      label: progressLabel,
       value: progressText
     }
   ]
@@ -360,36 +435,49 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
   pass.generic.auxiliaryFields = [
     {
       key: 'reward',
-      label: 'Recompensa',
+      label: rewardLabel,
       value: rewardDescription
     }
   ]
 
-  pass.type = 'generic'
+  pass.type = resolvedPassType
 
   const backFields = [
     {
       key: 'instructions',
       label: 'Cómo usar',
-      value: resolvedCardDescription || 'Presenta este pass para acumular sellos y canjear recompensas.'
+      value: instructionsValue
     },
     {
       key: 'progress',
-      label: 'Progreso actual',
+      label: progressLabel,
       value: progressText
     },
     {
       key: 'reward_details',
-      label: 'Recompensa',
+      label: rewardLabel,
       value: rewardDescription
     }
   ]
+  if (!highlightReward) {
+    backFields.splice(2, 1)
+  }
   pass.backFields = backFields
 
+  const allowedBarcodeFormats = new Set([
+    'PKBarcodeFormatQR',
+    'PKBarcodeFormatPDF417',
+    'PKBarcodeFormatAztec',
+    'PKBarcodeFormatCode128'
+  ])
+  const normalizedBarcodeFormat = barcodeFormatSetting?.toString().trim()
+  const customBarcodeFormat = normalizedBarcodeFormat && allowedBarcodeFormats.has(normalizedBarcodeFormat)
+    ? normalizedBarcodeFormat
+    : null
   if (!Array.isArray(pass.barcodes) || pass.barcodes.length === 0) {
     pass.barcodes = [
       {
-        format: 'PKBarcodeFormatQR',
+        format: customBarcodeFormat || 'PKBarcodeFormatQR',
         message: token,
         messageEncoding: 'iso-8859-1'
       }
@@ -399,13 +487,16 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     pass.barcodes = [
       {
         ...first,
-        format: first?.format || 'PKBarcodeFormatQR',
+        format: customBarcodeFormat || first?.format || 'PKBarcodeFormatQR',
         message: token,
         messageEncoding: first?.messageEncoding || 'iso-8859-1'
       },
       ...rest
     ]
   }
+  const effectiveBarcodeFormat = Array.isArray(pass.barcodes) && pass.barcodes.length > 0
+    ? pass.barcodes[0].format
+    : 'PKBarcodeFormatQR'
 
   if (promotion?.ends_at) {
     pass.expirationDate = promotion.ends_at
@@ -419,7 +510,29 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
     customerCardId: loyaltyCard.id,
     customerCardUuid: data.customer_cards.loyalty_card_id,
     promotionId: data.promotion_id,
-    businessId: data.business_id
+    businessId: data.business_id,
+    scanCount,
+    passVersion,
+    theme: {
+      primaryColor: primarySetting || pass.backgroundColor,
+      secondaryColor: secondarySetting || null,
+      backgroundColor,
+      foregroundColor,
+      labelColor,
+      accentColor,
+      logoText
+    },
+    displayOptions: {
+      progressStyle,
+      showStampBubbles,
+      highlightReward,
+      barcodeFormat: effectiveBarcodeFormat
+    },
+    fieldLabels: {
+      progress: progressLabel,
+      reward: rewardLabel,
+      instructions: instructionsValue
+    }
   }
 
   const assets = await resolveAssetBundle(business.logo_url)
@@ -442,94 +555,17 @@ async function buildPassPayload(data: WalletPassWithDetails, token: string): Pro
       currentStamps,
       stampsRequired,
       progressText,
+      progressLabel,
+      progressStyle,
+      highlightReward,
+      barcodeFormat: effectiveBarcodeFormat,
+      scanCount,
+      passVersion,
       loyaltyCardName,
       promotionName,
       promotionId: data.promotion_id ?? null
     }
   }
-}
-
-function ensureSettingsObject(candidate: unknown): Record<string, any> {
-  if (isPlainObject(candidate)) {
-    return candidate as Record<string, any>
-  }
-  return {}
-}
-
-function createSettingsAccessor(settings: Record<string, any>) {
-  return (...paths: string[]) => {
-    for (const path of paths) {
-      if (!path) continue
-      const value = resolveSettingPath(settings, path)
-      if (value === null || value === undefined) {
-        continue
-      }
-      if (typeof value === 'string') {
-        const trimmed = value.trim()
-        if (trimmed.length > 0) {
-          return trimmed
-        }
-      } else if (typeof value === 'number' || typeof value === 'boolean') {
-        const text = String(value).trim()
-        if (text.length > 0) {
-          return text
-        }
-      }
-    }
-    return null
-  }
-}
-
-function resolveSettingPath(settings: Record<string, any>, path: string): unknown {
-  const segments = path.split('.').map((segment) => segment.trim()).filter(Boolean)
-  let current: unknown = settings
-
-  for (const segment of segments) {
-    if (Array.isArray(current)) {
-      const index = Number(segment)
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
-        return undefined
-      }
-      current = current[index]
-      continue
-    }
-
-    if (!isPlainObject(current)) {
-      return undefined
-    }
-
-    const key = resolveSettingKey(current, segment)
-    if (!key) {
-      return undefined
-    }
-
-    current = (current as Record<string, any>)[key]
-  }
-
-  return current
-}
-
-function resolveSettingKey(obj: Record<string, any>, segment: string): string | null {
-  if (Object.prototype.hasOwnProperty.call(obj, segment)) {
-    return segment
-  }
-
-  const normalizedSegment = normalizeSettingKey(segment)
-  for (const candidate of Object.keys(obj)) {
-    if (normalizeSettingKey(candidate) === normalizedSegment) {
-      return candidate
-    }
-  }
-
-  return null
-}
-
-function normalizeSettingKey(key: string): string {
-  return key.replace(/[_\s-]/g, '').toLowerCase()
-}
-
-function isPlainObject(value: unknown): value is Record<string, any> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 const shouldAttemptSigning = () => {

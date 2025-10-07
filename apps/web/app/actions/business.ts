@@ -1,6 +1,7 @@
 'use server'
 
 import { getServerSupabase } from '@/lib/supabaseServer'
+import { deepMergeSettings, ensureSettingsObject } from '@/lib/settings'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types/database.types'
 type Tables = Database['public']['Tables']
@@ -103,34 +104,65 @@ export async function uploadBusinessLogo(businessId: string, file: File) {
   return { success: true, logo_url: publicUrlData.publicUrl }
 }
 
-export async function updateBusinessAppearance(businessId: string, appearance: {
+export async function updateBusinessAppearance(
+  businessId: string,
+  appearance: {
   primary_color?: string
   secondary_color?: string
   background_color?: string
   text_color?: string
   card_title?: string
   card_description?: string
-}) {
+  },
+  settingsPatch?: Record<string, any>
+) {
   const demoStore = await cookies()
   const demo = demoStore.get('demo_user')?.value
   const supabase = await getServerSupabase()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     if (demo) {
-      return { success: true, appearance }
+      const mergedDemoSettings = settingsPatch ? deepMergeSettings({}, settingsPatch) : null
+      return { success: true, appearance, settings: mergedDemoSettings }
     }
     return { success: false, error: 'auth_required' }
   }
+
+  const { data: existingSettingsRow, error: fetchErr } = await (supabase as any)
+    .from('businesses')
+    .select('settings')
+    .eq('id', businessId)
+    .single()
+
+  if (fetchErr && fetchErr.code !== 'PGRST116') {
+    return { success: false, error: fetchErr.message }
+  }
+
+  const currentSettings = ensureSettingsObject(existingSettingsRow?.settings ?? {})
+  const mergedSettings = settingsPatch ? deepMergeSettings(currentSettings, settingsPatch) : currentSettings
   
-  const { error } = await (supabase as any).from('businesses').update({
+  const updatePayload: Record<string, any> = {
     primary_color: appearance.primary_color,
     secondary_color: appearance.secondary_color,
     background_color: appearance.background_color,
     text_color: appearance.text_color,
     card_title: appearance.card_title,
     card_description: appearance.card_description
-  }).eq('id', businessId)
+  }
+
+  if (settingsPatch) {
+    updatePayload.settings = mergedSettings
+  }
+
+  const { error } = await (supabase as any)
+    .from('businesses')
+    .update(updatePayload)
+    .eq('id', businessId)
   
   if (error) return { success: false, error: error.message }
-  return { success: true, appearance }
+  return {
+    success: true,
+    appearance,
+    settings: settingsPatch ? mergedSettings : existingSettingsRow?.settings ?? null
+  }
 }

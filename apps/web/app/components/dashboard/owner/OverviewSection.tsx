@@ -23,6 +23,7 @@ import type {
   TrendDatum,
   CustomerSegment,
   TabId,
+  RecentScan,
 } from '@/app/components/OwnerDashboardClient'
 
 interface OverviewSectionProps {
@@ -34,6 +35,7 @@ interface OverviewSectionProps {
   customerSegments: CustomerSegment[]
   businessId: string
   events: BusinessEventRow[]
+  recentScans: RecentScan[]
   onNavigateTab(tab: TabId): void
 }
 
@@ -83,6 +85,7 @@ export function OverviewSection({
   customerAnalytics,
   customerSegments,
   businessId,
+  recentScans,
   onNavigateTab,
   events,
 }: OverviewSectionProps) {
@@ -346,6 +349,53 @@ export function OverviewSection({
             <div className="mt-4 space-y-4">
               <UniversalScanner businessId={businessId} />
               <RedeemWalletPass businessId={businessId} />
+              <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50 p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-neutral-900">Clientes recientes</h4>
+                  <span className="text-[10px] uppercase tracking-wide text-neutral-500">Últimos 5</span>
+                </div>
+                <div className="mt-3 space-y-2 max-h-48 overflow-auto pr-1">
+                  {recentScans.length > 0 ? (
+                    recentScans.slice(0, 5).map((scan) => {
+                      const timestamp = new Date(scan.scannedAt)
+                      const timeLabel = Number.isNaN(timestamp.getTime())
+                        ? ''
+                        : timestamp.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                      const progressText = scan.progressText
+                        || (typeof scan.currentStamps === 'number' && typeof scan.stampsRequired === 'number'
+                          ? `${Math.min(scan.currentStamps, scan.stampsRequired)}/${scan.stampsRequired}`
+                          : null)
+                      const percent = typeof scan.currentStamps === 'number' && scan.stampsRequired > 0
+                        ? Math.min(100, Math.round((Math.min(scan.currentStamps, scan.stampsRequired) / scan.stampsRequired) * 100))
+                        : 100
+                      return (
+                        <div key={scan.scanId} className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold text-neutral-900">{scan.customerName || scan.customerEmail || 'Cliente'}</p>
+                              <p className="text-[10px] text-neutral-500">{scan.promotionName || 'Programa principal'}</p>
+                            </div>
+                            <div className="text-right text-[10px] text-neutral-500">
+                              <p className="font-semibold text-neutral-700">+{scan.pointsAwarded ?? 1}</p>
+                              <p>{timeLabel}</p>
+                            </div>
+                          </div>
+                          <div className="mt-2 text-[10px] text-neutral-500">
+                            {progressText}
+                          </div>
+                          <div className="mt-1 h-1.5 rounded-full bg-neutral-200">
+                            <div className="h-full rounded-full bg-neutral-900/70" style={{ width: `${percent}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-neutral-200 bg-white px-3 py-4 text-center text-[11px] text-neutral-500">
+                      Aún no hay escaneos. Registra el primero con el escáner.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

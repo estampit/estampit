@@ -586,6 +586,7 @@ export type Database = {
           points_awarded: number
           metadata: Json
           scanned_at: string
+          created_at: string
         }
         Insert: {
           id?: string
@@ -598,6 +599,7 @@ export type Database = {
           points_awarded?: number
           metadata?: Json
           scanned_at?: string
+          created_at?: string
         }
         Update: {
           id?: string
@@ -610,6 +612,7 @@ export type Database = {
           points_awarded?: number
           metadata?: Json
           scanned_at?: string
+          created_at?: string
         }
         Relationships: [
           {
@@ -1006,6 +1009,9 @@ export type Database = {
           id: string
           is_revoked: boolean
           last_used_at: string | null
+          last_known_stamps: number
+          last_known_progress: string | null
+          pass_version: number
           pass_type: string
           qr_token: string
           updated_at: string
@@ -1019,6 +1025,9 @@ export type Database = {
           id?: string
           is_revoked?: boolean
           last_used_at?: string | null
+          last_known_stamps?: number
+          last_known_progress?: string | null
+          pass_version?: number
           pass_type?: string
           qr_token: string
           updated_at?: string
@@ -1032,6 +1041,9 @@ export type Database = {
           id?: string
           is_revoked?: boolean
           last_used_at?: string | null
+          last_known_stamps?: number
+          last_known_progress?: string | null
+          pass_version?: number
           pass_type?: string
           qr_token?: string
           updated_at?: string
@@ -1128,8 +1140,29 @@ export type Database = {
           p_business_id: string
           p_customer_id: string
           p_loyalty_card_id: string
+          p_target_promotion_id?: string | null
         }
         Returns: Json
+      }
+      get_recent_wallet_scans: {
+        Args: { p_business_id: string; p_limit?: number }
+        Returns: {
+          scan_id: string
+          scanned_at: string
+          promotion_id: string
+          promotion_name: string | null
+          customer_id: string
+          customer_card_id: string
+          customer_name: string | null
+          customer_email: string | null
+          points_awarded: number
+          current_stamps: number | null
+          stamps_required: number
+          progress_text: string | null
+          pending_rewards: number | null
+          usage_count: number | null
+          wallet_pass_id: string
+        }[]
       }
       generate_loyalty_card_qr: {
         Args: { p_loyalty_card_id: string }

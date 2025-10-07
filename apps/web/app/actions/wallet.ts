@@ -36,5 +36,18 @@ export async function redeemWalletPassToken(businessId: string, qrToken: string)
   if (error) return { success: false, error: error.message }
   revalidatePath('/dashboard/me')
   revalidatePath('/dashboard/owner')
-  return { success: true, data }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'http://localhost:3001'
+
+  const tokenForDownload = (data && typeof data === 'object' && 'wallet_pass_token' in data && data.wallet_pass_token)
+    ? String((data as any).wallet_pass_token)
+    : qrToken
+
+  const downloadUrl = tokenForDownload
+    ? `${siteUrl.replace(/\/$/, '')}/api/wallet/download?token=${encodeURIComponent(tokenForDownload)}`
+    : null
+
+  return { success: true, data: { ...(data ?? {}), downloadUrl } }
 }

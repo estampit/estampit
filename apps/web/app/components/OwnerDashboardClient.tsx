@@ -98,6 +98,24 @@ export interface LiveAlert {
   occurredAt: string
 }
 
+export interface RecentScan {
+  scanId: string
+  scannedAt: string
+  promotionId: string
+  promotionName: string | null
+  customerId: string
+  customerCardId: string
+  customerName: string | null
+  customerEmail: string | null
+  pointsAwarded: number
+  currentStamps: number | null
+  stampsRequired: number
+  progressText: string | null
+  pendingRewards: number | null
+  usageCount: number | null
+  walletPassId: string
+}
+
 export type TabId = 'overview' | 'promotions' | 'customers' | 'appearance' | 'staff'
 
 export function OwnerDashboardClient() {
@@ -119,6 +137,7 @@ export function OwnerDashboardClient() {
   const [customerActivityLoading, setCustomerActivityLoading] = useState(false)
   const [recentEvents, setRecentEvents] = useState<BusinessEventRow[]>([])
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([])
+  const [recentScans, setRecentScans] = useState<RecentScan[]>([])
   const [promoPage, setPromoPage] = useState(1)
   const [promoFilters, setPromoFilters] = useState<{ status?: string; type?: string; search?: string }>({})
   const pageSize = 25
@@ -417,6 +436,7 @@ export function OwnerDashboardClient() {
         analyticsRes,
         segmentsRes,
         customersRes,
+        recentScansRes,
         eventsRes
       ] = await Promise.all([
         supabase.rpc('get_promotion_usage', { p_business_id: rawBusiness.id } as any).catch(() => ({ data: null })),
@@ -427,6 +447,7 @@ export function OwnerDashboardClient() {
         supabase.rpc('get_customer_analytics', { p_business_id: rawBusiness.id, p_days: 30 } as any).catch(() => ({ data: null })),
         supabase.rpc('get_customer_segments', { p_business_id: rawBusiness.id, p_days: 30 } as any).catch(() => ({ data: null })),
         supabase.rpc('get_customer_dashboard_data', { p_business_id: rawBusiness.id, p_limit: 200 } as any).catch(() => ({ data: [] })),
+        supabase.rpc('get_recent_wallet_scans', { p_business_id: rawBusiness.id, p_limit: 50 } as any).catch(() => ({ data: [] })),
         supabase
           .from('events')
           .select('id,event_type,created_at,metadata')
@@ -492,6 +513,25 @@ export function OwnerDashboardClient() {
         loyalty_card_id: row.loyalty_card_id,
         customer_card_id: row.customer_card_id,
         total_spent: row.total_spent ?? null,
+      })))
+
+      const recentScanRows = ((recentScansRes as any)?.data ?? []) as any[]
+      setRecentScans(recentScanRows.map((row: any): RecentScan => ({
+        scanId: row.scan_id,
+        scannedAt: row.scanned_at,
+        promotionId: row.promotion_id,
+        promotionName: row.promotion_name ?? null,
+        customerId: row.customer_id,
+        customerCardId: row.customer_card_id,
+        customerName: row.customer_name ?? null,
+        customerEmail: row.customer_email ?? null,
+        pointsAwarded: row.points_awarded ?? 0,
+        currentStamps: row.current_stamps ?? null,
+        stampsRequired: row.stamps_required ?? 0,
+        progressText: row.progress_text ?? null,
+        pendingRewards: row.pending_rewards ?? null,
+        usageCount: row.usage_count ?? null,
+        walletPassId: row.wallet_pass_id,
       })))
 
       const eventsRows = ((eventsRes as any)?.data ?? []) as any[]
@@ -571,6 +611,108 @@ export function OwnerDashboardClient() {
       supabase.removeChannel(channel)
     }
   }, [supabase, business?.id, normalizeEventMetadata, buildAlertFromEvent, eventMatchesCustomer, mapEventToActivity])
+
+  useEffect(() => {
+    if (!business?.id) return
+
+    const channel = supabase
+      .channel(`promotion-scans:${business.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'promotion_scan_events', filter: `business_id=eq.${business.id}` }, (payload: any) => {
+        const newRow = payload.new ?? {}
+        const metadata = (newRow.metadata ?? {}) as Record<string, any>
+        const points = typeof newRow.points_awarded === 'number' ? newRow.points_awarded : (typeof metadata.points_awarded === 'number' ? metadata.points_awarded : 1)
+
+        setMetrics((prev) => prev ? ({
+          ...prev,
+          stampsToday: (prev.stampsToday ?? 0) + points,
+          stampsWeek: (prev.stampsWeek ?? 0) + points,
+        }) : prev)
+
+        setPromoUsage((prev) => {
+          const list = prev ?? []
+          if (!newRow.promotion_id) return list
+          const existing = list.find((entry) => entry.promotion_id === newRow.promotion_id)
+          const promotionName = metadata.promotion_name
+            || promotions.find((p) => p.id === newRow.promotion_id)?.name
+            || 'Promoción'
+          if (existing) {
+            return list.map((entry) => entry.promotion_id === newRow.promotion_id
+              ? { ...entry, usage_count: (entry.usage_count ?? 0) + points, name: promotionName }
+              : entry)
+          }
+          return [
+            {
+              promotion_id: newRow.promotion_id,
+              usage_count: points,
+              name: promotionName,
+            },
+            ...list,
+          ]
+        })
+
+        const scan: RecentScan = {
+          scanId: newRow.id,
+          scannedAt: newRow.scanned_at ?? newRow.created_at ?? new Date().toISOString(),
+          promotionId: newRow.promotion_id,
+          promotionName: metadata.promotion_name ?? null,
+          customerId: newRow.customer_id,
+          customerCardId: newRow.customer_card_id,
+          customerName: metadata.customer_name ?? null,
+          customerEmail: metadata.customer_email ?? null,
+          pointsAwarded: points,
+          currentStamps: typeof metadata.current_stamps === 'number' ? metadata.current_stamps : null,
+          stampsRequired: typeof metadata.stamps_required === 'number' ? metadata.stamps_required : 0,
+          progressText: metadata.progress_text ?? null,
+          pendingRewards: typeof metadata.pending_rewards === 'number' ? metadata.pending_rewards : null,
+          usageCount: typeof metadata.promotion_usage === 'number' ? metadata.promotion_usage : null,
+          walletPassId: newRow.wallet_pass_id,
+        }
+
+        setRecentScans((prev) => {
+          const list = prev ?? []
+          const deduped = [scan, ...list.filter((item) => item.scanId !== scan.scanId)]
+          return deduped.slice(0, 50)
+        })
+
+        setCustomers((prev) => {
+          const list = prev ?? []
+          if (list.length === 0) return list
+          return list.map((customer) => {
+            if (customer.customer_id !== newRow.customer_id) return customer
+            const updatedStamps = typeof metadata.current_stamps === 'number'
+              ? metadata.current_stamps
+              : (customer.current_stamps ?? 0) + points
+            return {
+              ...customer,
+              current_stamps: updatedStamps,
+              last_stamp_at: newRow.scanned_at ?? newRow.created_at ?? new Date().toISOString(),
+            }
+          })
+        })
+
+        const currentCustomer = selectedCustomerRef.current
+        if (currentCustomer && currentCustomer.customer_id === newRow.customer_id) {
+          const activity: CustomerActivityEntry = {
+            id: newRow.id,
+            occurredAt: newRow.scanned_at ?? newRow.created_at ?? new Date().toISOString(),
+            label: 'Escaneo QR',
+            type: 'event',
+            stamps: points,
+            description: metadata.promotion_name ?? 'Sello registrado desde QR',
+            metadata,
+          }
+          setCustomerActivity((prev) => {
+            const deduped = [activity, ...prev.filter((item) => item.id !== activity.id)]
+            return deduped.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+          })
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [supabase, business?.id, promotions])
 
   function handleLocalToggle(id: string, active: boolean) {
     setPromotions(prev => prev.map(p=> p.id===id ? { ...p, is_active: active } : p))
@@ -794,6 +936,7 @@ export function OwnerDashboardClient() {
             customerAnalytics={customerAnalytics}
             customerSegments={customerSegments}
             businessId={business.id}
+            recentScans={recentScans}
             events={recentEvents}
             onNavigateTab={(tab) => setActiveTab(tab)}
           />
